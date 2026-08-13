@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: http://127.0.0.1:*; media-src http://127.0.0.1:*; style-src 'self'; script-src 'self'" />
+    <title>Flac Cast</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <svg class="svg-sprite" aria-hidden="true">
+      <symbol id="icon-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z" /></symbol>
+      <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14" /></symbol>
+      <symbol id="icon-skip-back" viewBox="0 0 24 24"><path d="M19 20 9 12l10-8ZM5 19V5" /></symbol>
+      <symbol id="icon-skip-forward" viewBox="0 0 24 24"><path d="m5 4 10 8-10 8ZM19 5v14" /></symbol>
+      <symbol id="icon-shuffle" viewBox="0 0 24 24"><path d="m18 4 3 3-3 3M3 7h3.5c4.5 0 6.5 10 11 10H21M18 14l3 3-3 3M3 17h3.5c1.7 0 3-1.4 4.2-3" /></symbol>
+      <symbol id="icon-repeat" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3" /></symbol>
+      <symbol id="icon-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4ZM15.5 8.5a5 5 0 0 1 0 7M18 6a8.5 8.5 0 0 1 0 12" /></symbol>
+      <symbol id="icon-cast" viewBox="0 0 24 24"><path d="M4 18a2 2 0 0 1 2 2M4 14a6 6 0 0 1 6 6M4 10a10 10 0 0 1 10 10M5 5h14a2 2 0 0 1 2 2v10" /></symbol>
+      <symbol id="icon-music" viewBox="0 0 24 24"><path d="M9 18V5l10-2v13M9 9l10-2" /><circle cx="6" cy="18" r="3" /><circle cx="16" cy="16" r="3" /></symbol>
+      <symbol id="icon-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8M12 17v4" /></symbol>
+      <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></symbol>
+      <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+      <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M8 11v6M12 11v6M16 11v6M6 7l1 14h10l1-14" /></symbol>
+      <symbol id="icon-playlist" viewBox="0 0 24 24"><path d="M4 6h10M4 11h10M4 16h7M18 5v11" /><circle cx="15" cy="17" r="3" /></symbol>
+      <symbol id="icon-queue" viewBox="0 0 24 24"><path d="M4 6h12M4 11h12M4 16h7M17 14v6M14 17h6" /></symbol>
+      <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" /></symbol>
+      <symbol id="icon-edit" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></symbol>
+    </svg>
+    <header>
+      <div>
+        <p class="eyebrow">REPRODUCTOR LOCAL</p>
+        <h1>Flac Cast</h1>
+      </div>
+      <div class="header-actions">
+        <label class="scale-control" title="Tamaño de la interfaz">
+          <svg class="control-icon" aria-hidden="true"><use href="#icon-monitor" /></svg>
+          <span>Interfaz</span>
+          <select id="ui-scale" aria-label="Tamaño de la interfaz">
+            <option value="auto">Auto</option>
+            <option value="0.9">90%</option>
+            <option value="1">100%</option>
+            <option value="1.1">110%</option>
+            <option value="1.25">125%</option>
+          </select>
+        </label>
+        <button id="choose-folder" class="library-button"><svg class="control-icon" aria-hidden="true"><use href="#icon-folder" /></svg><span>Bibliotecas</span></button>
+      </div>
+    </header>
+
+    <main>
+      <section class="library-toolbar">
+        <nav class="view-tabs" aria-label="Vista de biblioteca">
+          <span id="tab-indicator" class="tab-indicator" aria-hidden="true"></span>
+          <button id="tracks-tab" class="view-tab active">Pistas</button>
+          <button id="albums-tab" class="view-tab">Álbumes</button>
+          <button id="artists-tab" class="view-tab">Artistas</button>
+          <button id="playlists-tab" class="view-tab">Playlists</button>
+        </nav>
+        <label class="search-control">
+          <span aria-hidden="true">⌕</span>
+          <input id="library-search" type="search" placeholder="Buscar canciones, artistas o álbumes" autocomplete="off" />
+          <kbd>Ctrl F</kbd>
+        </label>
+        <div class="status">
+          <span id="library-activity" class="library-activity" hidden><i></i>Actualizando</span>
+          <span id="folder">Aún no has elegido una biblioteca</span>
+          <span id="count">0 pistas</span>
+        </div>
+      </section>
+      <section id="tracks" class="tracks">
+        <div class="empty">Selecciona una carpeta con archivos FLAC para comenzar.</div>
+      </section>
+    </main>
+
+    <aside id="library-panel" class="library-panel" hidden>
+      <div class="cast-panel-header">
+        <div>
+          <span class="eyebrow">BIBLIOTECA LOCAL</span>
+          <strong>Carpetas de música</strong>
+        </div>
+        <button id="library-close" class="icon-button" aria-label="Cerrar"><svg class="control-icon" aria-hidden="true"><use href="#icon-x" /></svg></button>
+      </div>
+      <div id="library-folders" class="library-folders"></div>
+      <button id="add-library" class="add-library"><svg class="control-icon" aria-hidden="true"><use href="#icon-plus" /></svg><span>Agregar carpeta</span></button>
+      <p class="library-help">Los cambios se detectan automáticamente. Quitar una carpeta no elimina sus archivos.</p>
+    </aside>
+
+    <aside id="cast-panel" class="cast-panel" hidden>
+      <div class="cast-panel-header">
+        <div>
+          <span class="eyebrow">GOOGLE CAST</span>
+          <strong id="cast-status">Buscando dispositivos…</strong>
+        </div>
+        <button id="cast-close" class="icon-button" aria-label="Cerrar"><svg class="control-icon" aria-hidden="true"><use href="#icon-x" /></svg></button>
+      </div>
+      <div id="cast-devices" class="cast-devices"></div>
+      <div id="cast-controls" class="cast-controls" hidden>
+        <button id="cast-toggle">Pausar</button>
+        <button id="cast-disconnect">Desconectar</button>
+      </div>
+      <p id="cast-quality" class="cast-quality">Se envía el FLAC original, sin transcodificar.</p>
+    </aside>
+
+    <aside id="playlist-picker" class="playlist-picker" hidden>
+      <div class="cast-panel-header">
+        <div>
+          <span class="eyebrow">PLAYLISTS</span>
+          <strong id="playlist-picker-title">Agregar canción</strong>
+        </div>
+        <button id="playlist-picker-close" class="icon-button" aria-label="Cerrar"><svg class="control-icon" aria-hidden="true"><use href="#icon-x" /></svg></button>
+      </div>
+      <div id="playlist-options" class="playlist-options"></div>
+      <button id="playlist-picker-create" class="add-library"><svg class="control-icon" aria-hidden="true"><use href="#icon-plus" /></svg><span>Nueva playlist</span></button>
+    </aside>
+
+    <aside id="queue-panel" class="queue-panel" hidden>
+      <div class="cast-panel-header">
+        <div>
+          <span class="eyebrow">REPRODUCCIÓN</span>
+          <strong>A continuación</strong>
+        </div>
+        <button id="queue-close" class="icon-button" aria-label="Cerrar"><svg class="control-icon" aria-hidden="true"><use href="#icon-x" /></svg></button>
+      </div>
+      <div id="queue-items" class="queue-items"></div>
+      <button id="queue-clear" class="queue-clear" type="button">Vaciar cola agregada</button>
+    </aside>
+
+    <div id="context-menu" class="context-menu" role="menu" hidden></div>
+
+    <dialog id="playlist-dialog" class="playlist-dialog">
+      <form id="playlist-form">
+        <span class="eyebrow">NUEVA PLAYLIST</span>
+        <h2>¿Cómo se llamará?</h2>
+        <input id="playlist-name" type="text" maxlength="80" autocomplete="off" placeholder="Nombre de la playlist" required />
+        <div class="dialog-actions">
+          <button id="playlist-cancel" type="button">Cancelar</button>
+          <button type="submit">Crear</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="playlist-edit-dialog" class="playlist-dialog playlist-edit-dialog">
+      <form id="playlist-edit-form">
+        <span class="eyebrow">EDITAR PLAYLIST</span>
+        <h2>Información de la playlist</h2>
+        <div class="playlist-artwork-editor">
+          <div id="playlist-edit-artwork" class="artwork artwork-edit artwork-placeholder"><svg class="placeholder-icon"><use href="#icon-playlist" /></svg></div>
+          <div class="playlist-artwork-actions">
+            <button id="playlist-artwork-choose" type="button">Elegir imagen</button>
+            <button id="playlist-artwork-remove" type="button">Quitar imagen</button>
+          </div>
+        </div>
+        <label class="dialog-label" for="playlist-edit-name">Nombre</label>
+        <input id="playlist-edit-name" type="text" maxlength="80" autocomplete="off" required />
+        <div class="dialog-actions">
+          <button id="playlist-edit-cancel" type="button">Cancelar</button>
+          <button type="submit">Guardar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer>
+      <div class="now-playing-wrap">
+        <div id="now-art" class="artwork artwork-player artwork-placeholder" aria-hidden="true"><svg class="placeholder-icon"><use href="#icon-music" /></svg></div>
+        <div class="now-playing">
+          <span class="eyebrow">SONANDO AHORA</span>
+          <strong id="now-title">Nada seleccionado</strong>
+          <span id="now-detail">—</span>
+        </div>
+        <button id="now-playlist-button" class="now-playlist-button" aria-label="Agregar canción actual a una playlist" title="Agregar a playlist" disabled><svg class="control-icon" aria-hidden="true"><use href="#icon-plus" /></svg></button>
+      </div>
+      <div class="transport-controls">
+        <button id="previous-track" class="queue-button" aria-label="Canción anterior" title="Anterior"><svg class="control-icon" aria-hidden="true"><use href="#icon-skip-back" /></svg></button>
+        <div class="transport-slot">
+          <audio id="player" preload="metadata"></audio>
+          <div id="local-player" class="transport-player">
+            <button id="local-toggle" class="transport-toggle" aria-label="Reproducir o pausar" disabled><svg class="control-icon" aria-hidden="true"><use href="#icon-play" /></svg></button>
+            <span id="local-time" class="transport-time">0:00 / 0:00</span>
+            <input id="local-progress" class="timeline" type="range" min="0" max="1" value="0" step="0.1" aria-label="Posición de reproducción" disabled />
+            <span class="transport-volume-icon" aria-hidden="true"><svg class="control-icon"><use href="#icon-volume" /></svg></span>
+            <input id="local-volume" class="volume-slider" type="range" min="0" max="1" value="1" step="0.01" aria-label="Volumen local" />
+          </div>
+          <div id="remote-player" class="transport-player" hidden>
+            <button id="remote-toggle" class="transport-toggle" aria-label="Reproducir o pausar"><svg class="control-icon" aria-hidden="true"><use href="#icon-play" /></svg></button>
+            <span id="remote-time" class="transport-time">0:00 / 0:00</span>
+            <input id="remote-progress" class="timeline" type="range" min="0" max="1" value="0" step="0.1" aria-label="Posición de reproducción" />
+            <span class="transport-volume-icon" aria-hidden="true"><svg class="control-icon"><use href="#icon-volume" /></svg></span>
+            <input id="remote-volume" class="volume-slider" type="range" min="0" max="1" value="0.5" step="0.01" aria-label="Volumen de Chromecast" />
+          </div>
+        </div>
+        <button id="next-track" class="queue-button" aria-label="Canción siguiente" title="Siguiente"><svg class="control-icon" aria-hidden="true"><use href="#icon-skip-forward" /></svg></button>
+        <button id="shuffle-button" class="queue-button" aria-label="Activar reproducción aleatoria" title="Aleatorio"><svg class="control-icon" aria-hidden="true"><use href="#icon-shuffle" /></svg></button>
+        <button id="repeat-button" class="queue-button repeat-button" aria-label="Activar repetición de álbum" title="Repetir"><svg class="control-icon" aria-hidden="true"><use href="#icon-repeat" /></svg><span id="repeat-mode" class="repeat-mode" hidden></span></button>
+      </div>
+      <div class="footer-actions">
+        <button id="queue-panel-button" class="cast queue-panel-button" title="Ver cola de reproducción"><svg class="control-icon" aria-hidden="true"><use href="#icon-queue" /></svg><span>Cola</span><span id="queue-count" class="queue-count">0</span></button>
+        <button id="cast-button" class="cast" title="Reproducir en Chromecast"><svg class="control-icon" aria-hidden="true"><use href="#icon-cast" /></svg><span id="cast-button-label">Cast</span></button>
+      </div>
+    </footer>
+    <script src="app.js"></script>
+  </body>
+</html>
