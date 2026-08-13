@@ -1170,6 +1170,12 @@ function renderCastState(): void {
   }
   renderRemoteTransport();
   castDevices.replaceChildren();
+  if (currentCastState.deliveryPhase === "preparing") {
+    castStatus.textContent = "Preparando FLAC en el caché local…";
+    if (selectedTrack) renderDeliveryQuality(selectedTrack);
+    updateTaskbarControls();
+    return;
+  }
   if (currentCastState.deliveryPhase === "converting") {
     castStatus.textContent = "Convirtiendo a WAV PCM lossless…";
     if (selectedTrack) renderDeliveryQuality(selectedTrack);
@@ -1808,9 +1814,17 @@ function formatQuality(track: Track): string {
 }
 
 function renderDeliveryQuality(track: Track): void {
-  const format = currentCastState.deliveryMode === "wav-lossless" ? "WAV PCM lossless" : "FLAC original";
+  const format = currentCastState.deliveryMode === "wav-lossless"
+    ? "WAV PCM lossless"
+    : currentCastState.deliveryMode === "flac-repacked"
+      ? "FLAC original · contenedor saneado"
+      : currentCastState.deliveryMode === "flac-cached"
+        ? "FLAC original · caché local"
+        : "FLAC original";
   const bits = currentCastState.deliveryBits ?? track.bitsPerSample;
-  const rate = track.sampleRate ? Math.min(track.sampleRate, 96_000) : undefined;
+  const rate = track.sampleRate
+    ? currentCastState.deliveryMode === "wav-lossless" ? Math.min(track.sampleRate, 96_000) : track.sampleRate
+    : undefined;
   const quality = `${bits ? `${bits}-bit` : "— bit"} / ${rate ? `${rate / 1000} kHz` : "— kHz"}`;
   castQuality.textContent = `${format} · ${quality}`;
 }

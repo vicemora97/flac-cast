@@ -193,7 +193,10 @@ export class LibraryUnavailableError extends Error {
 async function getOrCreateArtworkEndpoint(artwork: CachedArtwork, folder: string, server: MediaServer, endpoints: Map<string, Promise<ArtworkEndpoint | undefined>>): Promise<ArtworkEndpoint | undefined> {
   let endpoint = endpoints.get(artwork.fileName);
   if (!endpoint) {
-    endpoint = readFile(join(folder, artwork.fileName)).then((data) => server.registerArtwork(data, artwork.format)).catch(() => undefined);
+    const artworkPath = join(folder, artwork.fileName);
+    endpoint = stat(artworkPath)
+      .then(() => server.registerArtworkFile(artworkPath, artwork.format))
+      .catch(() => undefined);
     endpoints.set(artwork.fileName, endpoint);
   }
   return endpoint;

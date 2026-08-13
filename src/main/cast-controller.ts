@@ -4,6 +4,8 @@ import type { CastDevice, CastState, CastTrack } from "../shared/contracts.js";
 
 type KnownDevice = CastDevice & { host: string; lastSeen: number };
 type LosslessFallback = (track: CastTrack, targetBits: 16 | 24) => Promise<string>;
+type PreparedFlac = { url: string; repacked: boolean };
+type FlacPreparer = (track: CastTrack) => Promise<PreparedFlac>;
 type ReceiverStatus = { volume?: { level?: number; muted?: boolean } };
 
 export class CastController {
@@ -16,7 +18,10 @@ export class CastController {
   private stateUpdatedAt = Date.now();
   private volumeRefresh?: Promise<void>;
 
-  constructor(private readonly createLosslessFallback: LosslessFallback) {
+  constructor(
+    private readonly prepareFlac: FlacPreparer,
+    private readonly createLosslessFallback: LosslessFallback
+  ) {
     this.bonjour = new Bonjour({}, (error: Error) => {
       this.state = { ...this.state, error: `No se pudo usar mDNS: ${error.message}` };
     });
@@ -123,13 +128,28 @@ export class CastController {
     };
     if (track.castArtworkUrl) metadata.images = [{ url: track.castArtworkUrl }];
 
-    const needsWavFallback = /(?:^|HW-)S700D/i.test(this.state.deviceModel ?? "");
-    if (!needsWavFallback) {
+    this.state = {
+      ...this.state,
+      playerState: "BUFFERING",
+      idleReason: undefined,
+      error: undefined,
+      deliveryMode: "flac-cached",
+      deliveryBits: track.bitsPerSample,
+      deliveryPhase: "preparing",
+      currentTime: 0,
+      duration: track.durationSeconds
+    };
+
+    try {
+      const prepared = await this.prepareFlac(track);
+      const deliveryMode = prepared.repacked ? "flac-repacked" : "flac-cached";
       for (const contentType of ["audio/flac", "audio/x-flac"]) {
-        if (await this.tryLoad(track.castUrl, contentType, track.durationSeconds, metadata, "flac-original")) {
+        if (await this.tryLoad(prepared.url, contentType, track.durationSeconds, metadata, deliveryMode, 4_000, 1_500)) {
           return this.getState();
         }
       }
+    } catch (error) {
+      console.warn(`No se pudo preparar el FLAC directo de ${track.title}`, error);
     }
 
     this.state = {
@@ -138,7 +158,7 @@ export class CastController {
       idleReason: undefined,
       error: undefined,
       deliveryMode: "wav-lossless",
-      deliveryBits: needsWavFallback ? 16 : (track.bitsPerSample && track.bitsPerSample <= 16 ? 16 : 24),
+      deliveryBits: track.bitsPerSample && track.bitsPerSample <= 16 ? 16 : 24,
       deliveryPhase: "converting",
       currentTime: 0,
       duration: track.durationSeconds
@@ -151,14 +171,7 @@ export class CastController {
       }
     }
     this.state = { ...this.state, deliveryPhase: "failed" };
-    throw new Error("La barra rechazó tanto el FLAC original como el WAV PCM lossless");
-  }
-
-  getLosslessFallbackBits(): 16 | 24 | undefined {
-    if (!this.state.connected) return undefined;
-    if (/(?:^|HW-)S700D/i.test(this.state.deviceModel ?? "")) return 16;
-    if (this.state.deliveryMode !== "wav-lossless") return undefined;
-    return this.state.deliveryBits === 16 ? 16 : 24;
+    throw new Error("La barra rechazó tanto el FLAC preparado como el WAV PCM lossless");
   }
 
   async command(command: "play" | "pause"): Promise<CastState> {
@@ -305,8 +318,9 @@ export class CastController {
     contentType: string,
     duration: number | undefined,
     metadata: Record<string, unknown>,
-    deliveryMode: "flac-original" | "wav-lossless",
-    waitMilliseconds = 4_000
+    deliveryMode: "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless",
+    waitMilliseconds = 4_000,
+    stabilityMilliseconds = 0
   ): Promise<boolean> {
     if (!this.player) return false;
     this.state = {
@@ -327,9 +341,14 @@ export class CastController {
         });
       }), 6_000, `Chromecast no pudo cargar ${contentType}`);
       this.applyStatus(status);
-      if (status.playerState === "PLAYING") return true;
+      if (status.playerState === "PLAYING") {
+        return stabilityMilliseconds > 0 ? this.confirmPlaybackStability(stabilityMilliseconds) : true;
+      }
       if (status.playerState === "IDLE" && status.idleReason === "ERROR") return false;
-      return await this.waitForPlaybackOutcome(waitMilliseconds);
+      const playing = await this.waitForPlaybackOutcome(waitMilliseconds);
+      return playing && stabilityMilliseconds > 0
+        ? this.confirmPlaybackStability(stabilityMilliseconds)
+        : playing;
     } catch {
       return false;
     }
@@ -354,6 +373,30 @@ export class CastController {
         else if (status.playerState === "IDLE" && status.idleReason === "ERROR") finish(false);
       };
       const timer = setTimeout(() => finish(this.state.playerState === "PLAYING"), milliseconds);
+      this.player.on("status", onStatus);
+    });
+  }
+
+  private confirmPlaybackStability(milliseconds: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (!this.player) {
+        resolve(false);
+        return;
+      }
+      let settled = false;
+      const finish = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.player?.removeListener("status", onStatus);
+        resolve(result);
+      };
+      const onStatus = (status: CastMediaStatus) => {
+        if (status.playerState === "IDLE" && status.idleReason === "ERROR") finish(false);
+      };
+      const timer = setTimeout(() => {
+        finish(this.state.playerState !== "IDLE" || this.state.idleReason !== "ERROR");
+      }, milliseconds);
       this.player.on("status", onStatus);
     });
   }

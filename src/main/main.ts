@@ -26,15 +26,28 @@ let tray: Tray | undefined;
 let isQuitting = false;
 const taskbarStateCache = new Map<number, string>();
 const taskbarIconCache = new Map<string, Electron.NativeImage>();
-const castController = new CastController(async (track, targetBits) => {
-  if (!track.castUrl) throw new Error("La pista no tiene una URL local para Chromecast");
-  const sourcePath = mediaServer.resolveFile(track.castUrl);
-  if (!sourcePath) throw new Error("No se encontró el archivo local para convertirlo");
-  const wavPath = await transcoder.toWav(sourcePath, targetBits, track.sampleRate);
-  const endpoint = mediaServer.register(wavPath);
-  if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el WAV");
-  return endpoint.castUrl;
-});
+const castController = new CastController(
+  async (track) => {
+    if (!track.castUrl) throw new Error("La pista no tiene una URL local para Chromecast");
+    const sourcePath = mediaServer.resolveFile(track.castUrl);
+    if (!sourcePath) throw new Error("No se encontró el archivo original para preparar el FLAC");
+    const prepared = await transcoder.prepareFlac(sourcePath);
+    transcoder.setActiveFile(prepared.filePath);
+    const endpoint = mediaServer.register(prepared.filePath);
+    if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el FLAC preparado");
+    return { url: endpoint.castUrl, repacked: prepared.repacked };
+  },
+  async (track, targetBits) => {
+    if (!track.castUrl) throw new Error("La pista no tiene una URL local para Chromecast");
+    const sourcePath = mediaServer.resolveFile(track.castUrl);
+    if (!sourcePath) throw new Error("No se encontró el archivo local para convertirlo");
+    const wavPath = await transcoder.toWav(sourcePath, targetBits, track.sampleRate);
+    transcoder.setActiveFile(wavPath);
+    const endpoint = mediaServer.register(wavPath);
+    if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el WAV");
+    return endpoint.castUrl;
+  }
+);
 
 async function createWindow(): Promise<void> {
   await mediaServer.start();
@@ -194,18 +207,16 @@ ipcMain.handle("cast:seek", (_event, seconds: number) => castController.seek(sec
 ipcMain.handle("cast:volume", (_event, level: number) => castController.setVolume(level));
 ipcMain.handle("cast:prewarm", async (_event, tracks: CastTrack[]): Promise<number> => {
   const generation = ++castPrewarmGeneration;
-  const targetBits = castController.getLosslessFallbackBits();
-  if (!targetBits) return 0;
   let prepared = 0;
   for (const [index, track] of tracks.slice(0, 5).entries()) {
     if (generation !== castPrewarmGeneration || !castController.getState().connected) break;
-    if (index >= 2) await new Promise((resolve) => setTimeout(resolve, 4_000));
+    if (index > 0) await new Promise((resolve) => setTimeout(resolve, 250));
     if (generation !== castPrewarmGeneration) break;
     if (!track.castUrl) continue;
     const sourcePath = mediaServer.resolveFile(track.castUrl);
     if (!sourcePath) continue;
     try {
-      await transcoder.toWav(sourcePath, targetBits, track.sampleRate);
+      await transcoder.prepareFlac(sourcePath);
       prepared += 1;
     } catch (error) {
       console.warn(`No se pudo precalentar ${track.title}`, error);
@@ -215,6 +226,7 @@ ipcMain.handle("cast:prewarm", async (_event, tracks: CastTrack[]): Promise<numb
 });
 ipcMain.handle("cast:disconnect", () => {
   castPrewarmGeneration += 1;
+  transcoder.setActiveFile(undefined);
   return castController.disconnect();
 });
 ipcMain.handle("media:last-access", () => mediaServer.getLastMediaAccess());

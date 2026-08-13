@@ -32,9 +32,9 @@ export type CastState = {
   muted?: boolean;
   error?: string;
   idleReason?: string;
-  deliveryMode?: "flac-original" | "wav-lossless";
+  deliveryMode?: "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless";
   deliveryBits?: number;
-  deliveryPhase?: "loading" | "converting" | "playing" | "failed";
+  deliveryPhase?: "preparing" | "loading" | "converting" | "playing" | "failed";
 };
 
 export type CastTrack = Pick<Track, "title" | "artist" | "album" | "durationSeconds" | "sampleRate" | "bitsPerSample" | "castUrl" | "castArtworkUrl">;

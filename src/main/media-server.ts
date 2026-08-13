@@ -14,7 +14,7 @@ export class MediaServer {
   private readonly token = randomBytes(24).toString("hex");
   private readonly files = new Map<string, string>();
   private readonly fileIds = new Map<string, string>();
-  private readonly artwork = new Map<string, { data: Buffer; contentType: string }>();
+  private readonly artwork = new Map<string, { filePath: string; contentType: string }>();
   private server?: Server;
   private port?: number;
   private lastMediaAccess?: MediaAccess;
@@ -91,11 +91,10 @@ export class MediaServer {
     }
   }
 
-  registerArtwork(data: Uint8Array, contentType: string): { localUrl: string; castUrl?: string } {
+  registerArtworkFile(filePath: string, contentType: string): { localUrl: string; castUrl?: string } {
     if (!this.port) throw new Error("El servidor de audio no está iniciado");
-    const buffer = Buffer.from(data);
-    const id = createArtworkId(buffer);
-    if (!this.artwork.has(id)) this.artwork.set(id, { data: buffer, contentType });
+    const id = createArtworkId(filePath);
+    if (!this.artwork.has(id)) this.artwork.set(id, { filePath, contentType });
     const route = `/art/${this.token}/${id}`;
     const lanAddress = getLanIpv4();
     return {
@@ -122,12 +121,20 @@ export class MediaServer {
       response.writeHead(404).end();
       return;
     }
+    let size: number;
+    try {
+      size = statSync(item.filePath).size;
+    } catch {
+      response.writeHead(404).end();
+      return;
+    }
     response.writeHead(200, {
       "Cache-Control": "private, max-age=3600",
-      "Content-Length": item.data.length,
+      "Content-Length": size,
       "Content-Type": item.contentType
     });
-    response.end(headOnly ? undefined : item.data);
+    if (headOnly) response.end();
+    else createReadStream(item.filePath).on("error", () => response.destroy()).pipe(response);
   }
 
   private streamFile(
@@ -213,8 +220,8 @@ export class MediaServer {
   }
 }
 
-function createArtworkId(data: Buffer): string {
-  return createHash("sha256").update(data).digest("hex");
+function createArtworkId(filePath: string): string {
+  return createHash("sha256").update(filePath).digest("hex");
 }
 
 function getLanIpv4(): string | undefined {
