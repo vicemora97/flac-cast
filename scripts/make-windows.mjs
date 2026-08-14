@@ -1,6 +1,7 @@
 import installer from "electron-winstaller";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { writeSha256 } from "./checksum.mjs";
 import { packageWindows, projectRoot } from "./windows-build.mjs";
 
 const [appDirectory] = await packageWindows();
@@ -10,6 +11,7 @@ const outputDirectory = join(projectRoot, "out", "make", "squirrel.windows", "x6
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
 
+const setupPath = join(outputDirectory, "Flac Cast Setup.exe");
 await installer.createWindowsInstaller({
   appDirectory,
   outputDirectory,
@@ -23,4 +25,5 @@ await installer.createWindowsInstaller({
   noMsi: true
 });
 
-console.log(`Instalador generado en:\n${join(outputDirectory, "Flac Cast Setup.exe")}`);
+const checksumPath = await writeSha256(setupPath);
+console.log(`Instalador generado en:\n${setupPath}\nSHA-256 generado en:\n${checksumPath}`);

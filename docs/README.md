@@ -10,14 +10,15 @@ This directory documents the current implementation of Flac Cast. It is intended
 | [Architecture](ARCHITECTURE.md) | Process boundaries, modules, IPC contracts, startup, playback state, and design decisions. |
 | [Google Cast pipeline](CASTING.md) | Discovery, serving, compatibility fallbacks, quality reporting, prewarming, and receiver behavior. |
 | [Development guide](DEVELOPMENT.md) | Repository layout, commands, build pipeline, coding workflow, packaging, and contribution notes. |
+| [Release guide](RELEASE.md) | Versioning, native artifacts, validation, signing limitations, checksums, tags, and GitHub releases. |
 | [Data and security](DATA_AND_SECURITY.md) | Persistent files, caches, privacy, local HTTP security, deletion safety, and network exposure. |
-| [Troubleshooting](TROUBLESHOOTING.md) | Common Windows, NAS, library, playback, Cast, lyrics, and packaging problems. |
+| [Troubleshooting](TROUBLESHOOTING.md) | Common desktop, NAS, library, playback, Cast, lyrics, and packaging problems. |
 
 ## Documentation conventions
 
 - Documentation and the project README are written in English.
 - The application UI defaults to English and currently supports English and Spanish.
-- Paths use Windows notation unless a code example is platform-neutral.
+- Platform-specific paths and commands identify their target operating system.
 - Behavior described here reflects the source tree, not a previously installed build.
 - An installed build changes only after a new installer is generated and installed.
 

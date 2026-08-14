@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { writeSha256 } from "./checksum.mjs";
 import { packageMac, projectRoot } from "./mac-build.mjs";
 
 const run = promisify(execFile);
@@ -34,4 +35,5 @@ await run("hdiutil", [
   dmgPath
 ]);
 
-console.log(`Instalador generado en:\n${dmgPath}`);
+const checksumPath = await writeSha256(dmgPath);
+console.log(`Instalador generado en:\n${dmgPath}\nSHA-256 generado en:\n${checksumPath}`);

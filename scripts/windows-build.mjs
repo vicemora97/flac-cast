@@ -11,7 +11,6 @@ export function packageWindows() {
     overwrite: true,
     platform: "win32",
     arch: "x64",
-    electronVersion: "37.4.0",
     name: "Flac Cast",
     executableName: "Flac Cast",
     icon: join(projectRoot, "assets", "icon.ico"),

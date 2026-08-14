@@ -11,7 +11,6 @@ export function packageMac() {
     overwrite: true,
     platform: "darwin",
     arch: "arm64",
-    electronVersion: "37.4.0",
     name: "Flac Cast",
     executableName: "Flac Cast",
     icon: join(projectRoot, "assets", "icon.icns"),

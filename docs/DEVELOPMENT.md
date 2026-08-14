@@ -2,15 +2,15 @@
 
 ## Technology
 
-- Electron 37
+- Electron 43
 - TypeScript 5
 - esbuild
-- Node.js 22 target
+- Node.js 24 development/runtime baseline, with conservative bundle targets
 - `music-metadata`
 - `bonjour-service`
 - `castv2-client`
 - `ffmpeg-static`
-- Squirrel.Windows packaging
+- Squirrel.Windows packaging and macOS DMG packaging
 
 ## Repository layout
 
@@ -26,29 +26,29 @@ dist/                   Generated development build
 out/                    Generated packaged app and installer
 ```
 
-Do not edit `dist` directly. `npm.cmd run build` recreates it from `src`.
+Do not edit `dist` directly. `npm run build` recreates it from `src`.
 
 ## Install dependencies
 
-```powershell
-npm.cmd install
+```text
+npm install
 ```
 
-On PowerShell configurations that block `npm.ps1`, use `npm.cmd` as shown throughout this documentation.
+On PowerShell configurations that block `npm.ps1`, replace `npm` with `npm.cmd` in these commands.
 
 ## Run in development
 
-```powershell
-npm.cmd run dev
+```text
+npm run dev
 ```
 
 The command builds the project and launches Electron. The window close button hides the app to the tray; quit from the tray before testing a fresh process.
 
 ## Validation
 
-```powershell
-npm.cmd run check
-npm.cmd run build
+```text
+npm run check
+npm run build
 ```
 
 `check` runs TypeScript without emitting files. `build` bundles main, preload, and renderer entry points and copies renderer HTML/CSS to `dist`.
@@ -68,6 +68,15 @@ npm.cmd run make:win
 ```
 
 Generated output belongs under `out`. The installer is not automatically signed.
+
+On macOS Apple silicon, create the application bundle or DMG with:
+
+```bash
+npm run package:mac
+npm run make:mac
+```
+
+The DMG is not Developer ID signed or notarized. Linux packaging remains pending and must be validated natively before it is added to release instructions. See [Release guide](RELEASE.md) for the complete checklist.
 
 ## Source responsibilities
 
