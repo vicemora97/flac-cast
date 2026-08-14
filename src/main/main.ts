@@ -284,7 +284,7 @@ ipcMain.handle("ui:set-scale", (event, scale: number) => {
 ipcMain.handle("cast:devices", () => castController.listDevices());
 ipcMain.handle("cast:state", (_event, refreshVolume = true) => refreshVolume ? castController.getFreshState() : castController.getState());
 ipcMain.handle("cast:connect", (_event, deviceId: string) => castController.connect(deviceId));
-ipcMain.handle("cast:track", (_event, track: CastTrack) => castController.castTrack(track));
+ipcMain.handle("cast:track", (_event, track: CastTrack, startTimeSeconds?: number) => castController.castTrack(track, startTimeSeconds));
 ipcMain.handle("cast:command", (_event, command: "play" | "pause") => castController.command(command));
 ipcMain.handle("cast:seek", (_event, seconds: number) => castController.seek(seconds));
 ipcMain.handle("cast:volume", (_event, level: number) => castController.setVolume(level));

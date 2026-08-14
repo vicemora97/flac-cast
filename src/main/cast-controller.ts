@@ -116,9 +116,11 @@ export class CastController {
     }
   }
 
-  async castTrack(track: CastTrack): Promise<CastState> {
+  async castTrack(track: CastTrack, startTimeSeconds = 0): Promise<CastState> {
     if (!this.player || !this.state.connected) throw new Error("Primero selecciona un dispositivo Chromecast");
     if (!track.castUrl) throw new Error("No hay una dirección de red local disponible para esta pista");
+    const requestedStartTime = Number.isFinite(startTimeSeconds) ? startTimeSeconds : 0;
+    const startTime = Math.max(0, Math.min(track.durationSeconds ?? Number.POSITIVE_INFINITY, requestedStartTime));
 
     const metadata: Record<string, unknown> = {
       metadataType: 3,
@@ -136,7 +138,7 @@ export class CastController {
       deliveryMode: "flac-cached",
       deliveryBits: track.bitsPerSample,
       deliveryPhase: "preparing",
-      currentTime: 0,
+      currentTime: startTime,
       duration: track.durationSeconds
     };
 
@@ -144,7 +146,7 @@ export class CastController {
       const prepared = await this.prepareFlac(track);
       const deliveryMode = prepared.repacked ? "flac-repacked" : "flac-cached";
       for (const contentType of ["audio/flac", "audio/x-flac"]) {
-        if (await this.tryLoad(prepared.url, contentType, track.durationSeconds, metadata, deliveryMode, 4_000, 1_500)) {
+        if (await this.tryLoad(prepared.url, contentType, track.durationSeconds, metadata, deliveryMode, 4_000, 1_500, startTime)) {
           return this.getState();
         }
       }
@@ -160,13 +162,13 @@ export class CastController {
       deliveryMode: "wav-lossless",
       deliveryBits: track.bitsPerSample && track.bitsPerSample <= 16 ? 16 : 24,
       deliveryPhase: "converting",
-      currentTime: 0,
+      currentTime: startTime,
       duration: track.durationSeconds
     };
     const targetBits = this.state.deliveryBits === 16 ? 16 : 24;
     const wavUrl = await this.createLosslessFallback(track, targetBits);
     for (const contentType of ["audio/wav", "audio/x-wav"]) {
-      if (await this.tryLoad(wavUrl, contentType, track.durationSeconds, metadata, "wav-lossless", 8_000)) {
+      if (await this.tryLoad(wavUrl, contentType, track.durationSeconds, metadata, "wav-lossless", 8_000, 0, startTime)) {
         return this.getState();
       }
     }
@@ -320,7 +322,8 @@ export class CastController {
     metadata: Record<string, unknown>,
     deliveryMode: "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless",
     waitMilliseconds = 4_000,
-    stabilityMilliseconds = 0
+    stabilityMilliseconds = 0,
+    startTime = 0
   ): Promise<boolean> {
     if (!this.player) return false;
     this.state = {
@@ -330,12 +333,12 @@ export class CastController {
       error: undefined,
       deliveryMode,
       deliveryPhase: "loading",
-      currentTime: 0,
+      currentTime: startTime,
       duration: duration ?? this.state.duration
     };
     try {
       const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
-        this.player!.load({ contentId, contentType, streamType: "BUFFERED", duration, metadata }, { autoplay: true }, (error, result) => {
+        this.player!.load({ contentId, contentType, streamType: "BUFFERED", duration, metadata }, { autoplay: true, currentTime: startTime }, (error, result) => {
           if (error) reject(error);
           else resolve((result ?? {}) as CastMediaStatus);
         });

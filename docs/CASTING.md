@@ -66,6 +66,10 @@ The media server supports full responses, `HEAD`, suffix and normal byte ranges,
 
 The Cast panel can display the most recent receiver HTTP status and transferred byte count while buffering.
 
+## Local playback handoff
+
+When a receiver is selected while a local track is active, the renderer captures the local playback position at the moment local playback pauses. That position is sent as the initial `currentTime` in the Cast media load request and is preserved across the direct-FLAC and WAV fallback attempts. New tracks and automatic queue advances continue to start at zero.
+
 ## Troubleshooting Cast quality
 
 A published Cast codec table describes platform capabilities, not a guarantee for every third-party receiver implementation. Receiver firmware, Default Media Receiver support, accepted MIME aliases, FLAC metadata layout, channel configuration, and the downstream audio path can all affect playback.

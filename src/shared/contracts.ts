@@ -104,7 +104,7 @@ export type HiresApi = {
   getCastDevices(): Promise<CastDevice[]>;
   getCastState(refreshVolume?: boolean): Promise<CastState>;
   connectCast(deviceId: string): Promise<CastState>;
-  castTrack(track: CastTrack): Promise<CastState>;
+  castTrack(track: CastTrack, startTimeSeconds?: number): Promise<CastState>;
   castCommand(command: "play" | "pause"): Promise<CastState>;
   castSeek(seconds: number): Promise<CastState>;
   castVolume(level: number): Promise<CastState>;

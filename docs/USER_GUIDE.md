@@ -72,6 +72,8 @@ Open **Queue** to inspect playback order. Flac Cast deliberately separates:
 
 Right-click a track or use its three-dot button and select **Add to queue**. Added tracks play in insertion order before the scheduled queue. **Clear added queue** removes only manual entries.
 
+The Queue button badge counts manual FIFO entries only. The badge is hidden when the footer switches to its compact, icon-only layout.
+
 ## Track context menu
 
 The track menu offers:
@@ -88,6 +90,8 @@ The track menu offers:
 ## Google Cast
 
 Open **Cast**, choose a receiver, and select a track. The PC must remain awake and reachable because it serves the media directly to the receiver. The Cast panel reports preparation, conversion, buffering, playback, receiver requests, and effective format.
+
+When Cast is started during local playback, the receiver begins at the local player's current position instead of restarting the track.
 
 See [Google Cast pipeline](CASTING.md) for detailed compatibility behavior.
 

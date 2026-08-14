@@ -1118,7 +1118,8 @@ function renderQueue(): void {
   const scheduledStart = Math.max(0, queueIndex + 1);
   const scheduled = playbackQueue.slice(scheduledStart);
   const upcomingCount = manualQueue.length + scheduled.length;
-  queueCount.textContent = String(upcomingCount);
+  queueCount.textContent = String(manualQueue.length);
+  queueCount.hidden = manualQueue.length === 0;
   queuePanelButton.classList.toggle("active", !queuePanel.hidden);
   queueClear.disabled = manualQueue.length === 0;
 
@@ -1333,9 +1334,12 @@ async function connectCast(device: CastDevice, button: HTMLButtonElement): Promi
   castStatus.textContent = t("connectingDevice", { name: device.name });
   try {
     currentCastState = await window.hires.connectCast(device.id);
+    const localStartTime = player.dataset.trackId === selectedTrack?.id
+      ? Math.max(0, player.currentTime || 0)
+      : 0;
     player.pause();
     if (selectedTrack) {
-      currentCastState = await window.hires.castTrack(selectedTrack);
+      currentCastState = await window.hires.castTrack(selectedTrack, localStartTime);
       renderDeliveryQuality(selectedTrack);
     }
     renderCastState();
