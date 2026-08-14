@@ -105,6 +105,18 @@ export class PreferencesStore {
     await this.save();
   }
 
+  async removeTrackFromAllPlaylists(trackId: string): Promise<void> {
+    let changed = false;
+    for (const playlist of this.data.playlists) {
+      const nextTrackIds = playlist.trackIds.filter((id) => id !== trackId);
+      if (nextTrackIds.length === playlist.trackIds.length) continue;
+      playlist.trackIds = nextTrackIds;
+      playlist.updatedAt = Date.now();
+      changed = true;
+    }
+    if (changed) await this.save();
+  }
+
   setLibraryFolders(folders: string[]): Promise<void> {
     this.data.libraryFolders = uniqueFolders(folders);
     return this.save();

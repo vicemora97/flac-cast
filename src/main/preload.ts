@@ -2,11 +2,14 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { HiresApi } from "../shared/contracts.js";
 
 const api: HiresApi = {
+  setLanguage: (language) => ipcRenderer.invoke("app:set-language", language),
   setUiScale: (scale) => ipcRenderer.invoke("ui:set-scale", scale),
   loadSavedLibrary: () => ipcRenderer.invoke("library:saved"),
   refreshLibrary: () => ipcRenderer.invoke("library:refresh"),
   chooseLibrary: () => ipcRenderer.invoke("library:choose"),
   removeLibrary: (folder) => ipcRenderer.invoke("library:remove", folder),
+  revealTrack: (localUrl) => ipcRenderer.invoke("track:reveal", localUrl),
+  trashTrack: (localUrl, title, trackId) => ipcRenderer.invoke("track:trash", localUrl, title, trackId),
   onLibraryUpdated: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, result: Parameters<typeof listener>[0]) => listener(result);
     ipcRenderer.on("library:updated", handler);
@@ -27,6 +30,7 @@ const api: HiresApi = {
   prewarmCastTracks: (tracks) => ipcRenderer.invoke("cast:prewarm", tracks),
   disconnectCast: () => ipcRenderer.invoke("cast:disconnect"),
   getMediaAccess: () => ipcRenderer.invoke("media:last-access"),
+  getLyrics: (track) => ipcRenderer.invoke("lyrics:get", track),
   setTaskbarPlaybackState: (state) => ipcRenderer.send("playback:taskbar-state", state),
   onTaskbarPlaybackCommand: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, command: Parameters<typeof listener>[0]) => listener(command);

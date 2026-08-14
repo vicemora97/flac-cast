@@ -1,11 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Tray } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
 import squirrelStartup = require("electron-squirrel-startup");
-import { join } from "node:path";
+import { unlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { LibraryManager, LibraryUnavailableError } from "./library.js";
 import { LibraryWatcher } from "./library-watcher.js";
 import { MediaServer } from "./media-server.js";
 import { CastController } from "./cast-controller.js";
 import { LosslessTranscoder } from "./lossless-transcoder.js";
+import { LyricsService } from "./lyrics.js";
 import { PreferencesStore } from "./preferences.js";
 import type { CastTrack, LibraryResult, PlaybackCommand, TaskbarPlaybackState } from "../shared/contracts.js";
 
@@ -17,6 +19,7 @@ app.setAppUserModelId("com.squirrel.FlacCast.FlacCast");
 
 const mediaServer = new MediaServer();
 const transcoder = new LosslessTranscoder();
+const lyricsService = new LyricsService(app.getPath("userData"), app.getVersion());
 let preferences: PreferencesStore;
 let libraryManager: LibraryManager;
 let libraryWatcher: LibraryWatcher;
@@ -24,7 +27,10 @@ let libraryActivityCount = 0;
 let castPrewarmGeneration = 0;
 let tray: Tray | undefined;
 let isQuitting = false;
+let mediaShortcutsRegistered = false;
+let appLanguage: "en" | "es" = "en";
 const taskbarStateCache = new Map<number, string>();
+const taskbarPlaybackStates = new Map<number, TaskbarPlaybackState>();
 const taskbarIconCache = new Map<string, Electron.NativeImage>();
 const castController = new CastController(
   async (track) => {
@@ -106,7 +112,10 @@ async function createWindow(): Promise<void> {
       window.hide();
     }
   });
-  window.on("closed", () => taskbarStateCache.delete(window.id));
+  window.on("closed", () => {
+    taskbarStateCache.delete(window.id);
+    taskbarPlaybackStates.delete(window.id);
+  });
 
   if (savedWindow?.maximized) window.maximize();
 
@@ -121,9 +130,16 @@ async function createWindow(): Promise<void> {
       const transportItems = [...document.querySelectorAll('.transport-controls > *')];
       const centers = transportItems.map((item) => { const rect = item.getBoundingClientRect(); return rect.top + rect.height / 2; });
       document.querySelector('.track-row .more-button')?.click();
-      const trackContextMenu = !document.querySelector('#context-menu')?.hidden && document.querySelector('#context-menu')?.textContent?.includes('Agregar a la cola');
+      const trackContextMenu = !document.querySelector('#context-menu')?.hidden && document.querySelector('#context-menu')?.textContent?.includes('Add to queue');
       document.querySelector('#queue-panel-button')?.click();
       const queuePanelVisible = !document.querySelector('#queue-panel')?.hidden;
+      const languageSelect = document.querySelector('#language');
+      const initialLanguage = document.documentElement.lang;
+      languageSelect.value = 'es';
+      languageSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      const spanishSwitch = document.documentElement.lang === 'es' && document.querySelector('#tracks-tab')?.textContent === 'Pistas';
+      languageSelect.value = 'en';
+      languageSelect.dispatchEvent(new Event('change', { bubbles: true }));
       const search = document.querySelector('#library-search');
       search.value = 'Mirror';
       search.dispatchEvent(new Event('input', { bubbles: true }));
@@ -133,6 +149,9 @@ async function createWindow(): Promise<void> {
         chooseLibrary: typeof window.hires?.chooseLibrary,
         button: Boolean(document.querySelector('#choose-folder')),
         buttonDisabled: document.querySelector('#choose-folder')?.disabled,
+        languageSelector: Boolean(document.querySelector('#language')),
+        documentLanguage: initialLanguage,
+        spanishSwitch,
         ffmpeg: ${transcoder.isAvailable()},
         folder: document.querySelector('#folder')?.textContent,
         count: document.querySelector('#count')?.textContent,
@@ -142,13 +161,16 @@ async function createWindow(): Promise<void> {
         trackMenuButtons: document.querySelectorAll('.track-row .more-button').length,
         trackContextMenu,
         queuePanelVisible,
+        lyricsButton: Boolean(document.querySelector('#lyrics-button')),
+        lyricsPanel: Boolean(document.querySelector('#lyrics-panel')),
         playlistEditDialog: Boolean(document.querySelector('#playlist-edit-dialog')),
         searchResults,
         activityIndicator: Boolean(document.querySelector('#library-activity')),
         customTransport: Boolean(document.querySelector('#local-player .timeline')),
         transportAligned: Math.max(...centers) - Math.min(...centers) < 1,
         tabIndicatorWidth: getComputedStyle(document.querySelector('.view-tabs')).getPropertyValue('--tab-pill-width'),
-        taskbarControls: ${taskbarControls}
+        taskbarControls: ${taskbarControls},
+        mediaShortcuts: ${mediaShortcutsRegistered}
       });
     })()`);
     console.log(`HIRES_SMOKE ${diagnostics}`);
@@ -163,7 +185,7 @@ async function createWindow(): Promise<void> {
 ipcMain.handle("library:choose", async (event): Promise<LibraryResult> => {
   const parentWindow = BrowserWindow.fromWebContents(event.sender);
   const options: Electron.OpenDialogOptions = {
-    title: "Selecciona tu carpeta de música",
+    title: nativeText("selectMusicFolder"),
     properties: ["openDirectory"]
   };
   const selection = parentWindow
@@ -190,6 +212,67 @@ ipcMain.handle("library:remove", async (_event, folder: string): Promise<Library
   await libraryManager.remove(folder);
   libraryWatcher.setFolders(preferences.getLibraryFolders());
   return getLibraryResult();
+});
+
+ipcMain.handle("app:set-language", (_event, language: "en" | "es"): "en" | "es" => {
+  appLanguage = language === "es" ? "es" : "en";
+  for (const window of BrowserWindow.getAllWindows()) {
+    updateTrayMenu(window);
+    taskbarStateCache.delete(window.id);
+    const state = taskbarPlaybackStates.get(window.id);
+    if (state) setTaskbarButtons(window, state);
+  }
+  return appLanguage;
+});
+
+ipcMain.handle("track:reveal", (_event, localUrl: string): boolean => {
+  const source = resolveLibraryTrack(localUrl);
+  if (!source) throw new Error("La pista ya no pertenece a una biblioteca registrada");
+  shell.showItemInFolder(source.filePath);
+  return true;
+});
+
+ipcMain.handle("track:trash", async (event, localUrl: string, title: string, trackId: string): Promise<LibraryResult | undefined> => {
+  const source = resolveLibraryTrack(localUrl);
+  if (!source) throw new Error("La pista ya no pertenece a una biblioteca registrada");
+  const parentWindow = BrowserWindow.fromWebContents(event.sender);
+  const confirmation: Electron.MessageBoxOptions = {
+    type: "warning",
+    title: nativeText("deleteMusicFile"),
+    message: nativeText("moveTrackToTrash", { title: title || nativeText("thisTrack") }),
+    detail: `${nativeText("deleteOriginalDetail")}\n\n${source.filePath}`,
+    buttons: [nativeText("cancel"), nativeText("moveToTrash")],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true
+  };
+  const firstChoice = parentWindow
+    ? await dialog.showMessageBox(parentWindow, confirmation)
+    : await dialog.showMessageBox(confirmation);
+  if (firstChoice.response !== 1) return undefined;
+
+  try {
+    await shell.trashItem(source.filePath);
+  } catch (trashError) {
+    const permanentConfirmation: Electron.MessageBoxOptions = {
+      type: "warning",
+      title: nativeText("trashUnavailable"),
+      message: nativeText("locationNoTrash"),
+      detail: `${nativeText("nasPermanentDetail")}\n\n${source.filePath}\n\n${formatError(trashError)}`,
+      buttons: [nativeText("cancel"), nativeText("deletePermanently")],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    };
+    const secondChoice = parentWindow
+      ? await dialog.showMessageBox(parentWindow, permanentConfirmation)
+      : await dialog.showMessageBox(permanentConfirmation);
+    if (secondChoice.response !== 1) return undefined;
+    await unlink(source.filePath);
+  }
+
+  if (typeof trackId === "string") await preferences.removeTrackFromAllPlaylists(trackId);
+  return refreshLibraries([source.libraryFolder]);
 });
 
 ipcMain.handle("ui:set-scale", (event, scale: number) => {
@@ -230,6 +313,7 @@ ipcMain.handle("cast:disconnect", () => {
   return castController.disconnect();
 });
 ipcMain.handle("media:last-access", () => mediaServer.getLastMediaAccess());
+ipcMain.handle("lyrics:get", (_event, track) => lyricsService.getSyncedLyrics(track));
 ipcMain.on("playback:taskbar-state", (event, state: TaskbarPlaybackState) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (window) setTaskbarButtons(window, state);
@@ -246,9 +330,9 @@ ipcMain.handle("playlist:update", async (_event, id: string, changes: { name?: s
 ipcMain.handle("playlist:choose-artwork", async (event): Promise<string | undefined> => {
   const parentWindow = BrowserWindow.fromWebContents(event.sender);
   const options: Electron.OpenDialogOptions = {
-    title: "Selecciona una portada para la playlist",
+    title: nativeText("selectPlaylistArtwork"),
     properties: ["openFile"],
-    filters: [{ name: "Imágenes", extensions: ["png", "jpg", "jpeg"] }]
+    filters: [{ name: nativeText("images"), extensions: ["png", "jpg", "jpeg"] }]
   };
   const selection = parentWindow
     ? await dialog.showOpenDialog(parentWindow, options)
@@ -282,6 +366,7 @@ ipcMain.handle("playlist:remove-track", async (_event, playlistId: string, track
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
+  registerMediaShortcuts();
   preferences = new PreferencesStore(app.getPath("userData"));
   await preferences.load();
   libraryManager = new LibraryManager(app.getPath("userData"), mediaServer);
@@ -305,6 +390,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 app.on("before-quit", () => { isQuitting = true; });
+app.on("will-quit", () => { globalShortcut.unregisterAll(); });
 app.on("activate", () => {
   const window = BrowserWindow.getAllWindows()[0];
   if (!window) void createWindow();
@@ -314,6 +400,22 @@ app.on("activate", () => {
     window.focus();
   }
 });
+
+function registerMediaShortcuts(): void {
+  const shortcuts: Array<[string, PlaybackCommand]> = [
+    ["MediaPlayPause", "toggle"],
+    ["MediaNextTrack", "next"],
+    ["MediaPreviousTrack", "previous"]
+  ];
+  const results = shortcuts.map(([accelerator, command]) => globalShortcut.register(accelerator, () => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    window?.webContents.send("playback:taskbar-command", command);
+  }));
+  mediaShortcutsRegistered = results.every(Boolean);
+  if (!mediaShortcutsRegistered) {
+    console.warn("Windows no entregó todas las teclas multimedia a Flac Cast; otra aplicación puede tenerlas registradas.");
+  }
+}
 
 async function getLibraryResult(): Promise<LibraryResult> {
   const folders = preferences.getLibraryFolders();
@@ -363,8 +465,28 @@ function sameFolder(a: string, b: string): boolean {
   return a.replace(/[\\/]+$/, "").localeCompare(b.replace(/[\\/]+$/, ""), undefined, { sensitivity: "accent" }) === 0;
 }
 
+function resolveLibraryTrack(localUrl: string): { filePath: string; libraryFolder: string } | undefined {
+  if (typeof localUrl !== "string") return undefined;
+  const registeredFile = mediaServer.resolveFile(localUrl);
+  if (!registeredFile) return undefined;
+  const filePath = resolve(registeredFile);
+  for (const libraryFolder of preferences.getLibraryFolders()) {
+    const folderPath = resolve(libraryFolder);
+    const pathWithinFolder = relative(folderPath, filePath);
+    if (pathWithinFolder && pathWithinFolder !== ".." && !pathWithinFolder.startsWith(`..${sep}`) && !isAbsolute(pathWithinFolder)) {
+      return { filePath, libraryFolder };
+    }
+  }
+  return undefined;
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function setTaskbarButtons(window: BrowserWindow, state: TaskbarPlaybackState): boolean {
   if (process.platform !== "win32" || window.isDestroyed()) return false;
+  taskbarPlaybackStates.set(window.id, state);
   const signature = JSON.stringify(state);
   if (taskbarStateCache.get(window.id) === signature) return true;
   const assets = join(app.getAppPath(), "assets");
@@ -381,19 +503,19 @@ function setTaskbarButtons(window: BrowserWindow, state: TaskbarPlaybackState): 
   };
   const applied = window.setThumbarButtons([
     {
-      tooltip: "Canción anterior",
+      tooltip: nativeText("previousTrack"),
       icon: icon("thumbar-previous.png"),
       flags: state.canGoPrevious ? [] : ["disabled"],
       click: () => send("previous")
     },
     {
-      tooltip: state.isPlaying ? "Pausar" : "Reproducir",
+      tooltip: state.isPlaying ? nativeText("pause") : nativeText("play"),
       icon: icon(state.isPlaying ? "thumbar-pause.png" : "thumbar-play.png"),
       flags: state.hasTrack ? [] : ["disabled"],
       click: () => send("toggle")
     },
     {
-      tooltip: "Canción siguiente",
+      tooltip: nativeText("nextTrack"),
       icon: icon("thumbar-next.png"),
       flags: state.canGoNext ? [] : ["disabled"],
       click: () => send("next")
@@ -405,9 +527,17 @@ function setTaskbarButtons(window: BrowserWindow, state: TaskbarPlaybackState): 
 }
 
 function createTray(window: BrowserWindow): void {
-  if (tray) return;
+  if (tray) {
+    updateTrayMenu(window);
+    return;
+  }
   tray = new Tray(nativeImage.createFromPath(join(app.getAppPath(), "assets", "icon.png")));
   tray.setToolTip("Flac Cast");
+  updateTrayMenu(window);
+}
+
+function updateTrayMenu(window: BrowserWindow): void {
+  if (!tray) return;
   const showWindow = () => {
     if (window.isDestroyed()) return;
     window.show();
@@ -415,15 +545,45 @@ function createTray(window: BrowserWindow): void {
     window.focus();
   };
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "Abrir Flac Cast", click: showWindow },
+    { label: nativeText("openFlacCast"), click: showWindow },
     { type: "separator" },
     {
-      label: "Salir",
+      label: nativeText("quit"),
       click: () => {
         isQuitting = true;
         app.quit();
       }
     }
   ]));
+  tray.removeAllListeners("click");
   tray.on("click", showWindow);
+}
+
+type NativeTextKey = "selectMusicFolder" | "deleteMusicFile" | "moveTrackToTrash" | "thisTrack" | "deleteOriginalDetail"
+  | "cancel" | "moveToTrash" | "trashUnavailable" | "locationNoTrash" | "nasPermanentDetail" | "deletePermanently"
+  | "selectPlaylistArtwork" | "images" | "previousTrack" | "nextTrack" | "pause" | "play" | "openFlacCast" | "quit";
+
+function nativeText(key: NativeTextKey, variables: Record<string, string> = {}): string {
+  const english: Record<NativeTextKey, string> = {
+    selectMusicFolder: "Select a music folder", deleteMusicFile: "Delete music file", moveTrackToTrash: "Move “{title}” to the Recycle Bin?",
+    thisTrack: "this track", deleteOriginalDetail: "This deletes the original file, not only its Flac Cast entry.", cancel: "Cancel",
+    moveToTrash: "Move to Recycle Bin", trashUnavailable: "The Recycle Bin is unavailable",
+    locationNoTrash: "This location cannot move the file to the Recycle Bin.",
+    nasPermanentDetail: "This commonly occurs with network or NAS folders. If you continue, the file will be deleted permanently.",
+    deletePermanently: "Delete permanently", selectPlaylistArtwork: "Select playlist artwork", images: "Images",
+    previousTrack: "Previous track", nextTrack: "Next track", pause: "Pause", play: "Play", openFlacCast: "Open Flac Cast", quit: "Quit"
+  };
+  const spanish: Record<NativeTextKey, string> = {
+    selectMusicFolder: "Selecciona tu carpeta de música", deleteMusicFile: "Eliminar archivo de música", moveTrackToTrash: "¿Mover “{title}” a la Papelera?",
+    thisTrack: "esta canción", deleteOriginalDetail: "Se eliminará el archivo original, no solo su entrada en Flac Cast.", cancel: "Cancelar",
+    moveToTrash: "Mover a la Papelera", trashUnavailable: "La Papelera no está disponible",
+    locationNoTrash: "Esta ubicación no permite mover el archivo a la Papelera.",
+    nasPermanentDetail: "Esto suele ocurrir con carpetas de red o NAS. Si continúas, el archivo se eliminará permanentemente.",
+    deletePermanently: "Eliminar permanentemente", selectPlaylistArtwork: "Selecciona una portada para la playlist", images: "Imágenes",
+    previousTrack: "Canción anterior", nextTrack: "Canción siguiente", pause: "Pausar", play: "Reproducir", openFlacCast: "Abrir Flac Cast", quit: "Salir"
+  };
+  return Object.entries(variables).reduce(
+    (text, [name, value]) => text.replaceAll(`{${name}}`, value),
+    (appLanguage === "es" ? spanish : english)[key]
+  );
 }

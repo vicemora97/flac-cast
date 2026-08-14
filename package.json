@@ -3,7 +3,7 @@
   "productName": "Flac Cast",
   "version": "0.1.2",
   "private": true,
-  "description": "Reproductor local FLAC Hi-Res con Google Cast",
+  "description": "Local hi-res FLAC player with Google Cast support",
   "author": "@vicemora97 and Flac Cast contributors",
   "main": "dist/main/main.cjs",
   "scripts": {

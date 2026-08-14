@@ -39,6 +39,20 @@ export type CastState = {
 
 export type CastTrack = Pick<Track, "title" | "artist" | "album" | "durationSeconds" | "sampleRate" | "bitsPerSample" | "castUrl" | "castArtworkUrl">;
 
+export type LyricsTrack = Pick<Track, "title" | "artist" | "album" | "durationSeconds">;
+
+export type LyricsLine = {
+  startTime: number;
+  text: string;
+};
+
+export type SyncedLyrics = {
+  source: "LRCLIB";
+  trackName: string;
+  artistName: string;
+  lines: LyricsLine[];
+};
+
 export type MediaAccess = {
   timestamp: number;
   clientAddress?: string;
@@ -77,11 +91,14 @@ export type LibraryResult = {
 };
 
 export type HiresApi = {
+  setLanguage(language: "en" | "es"): Promise<"en" | "es">;
   setUiScale(scale: number): Promise<number>;
   loadSavedLibrary(): Promise<LibraryResult>;
   refreshLibrary(): Promise<LibraryResult>;
   chooseLibrary(): Promise<LibraryResult>;
   removeLibrary(folder: string): Promise<LibraryResult>;
+  revealTrack(localUrl: string): Promise<boolean>;
+  trashTrack(localUrl: string, title: string, trackId: string): Promise<LibraryResult | undefined>;
   onLibraryUpdated(listener: (result: LibraryResult) => void): () => void;
   onLibraryActivity(listener: (active: boolean) => void): () => void;
   getCastDevices(): Promise<CastDevice[]>;
@@ -94,6 +111,7 @@ export type HiresApi = {
   prewarmCastTracks(tracks: CastTrack[]): Promise<number>;
   disconnectCast(): Promise<CastState>;
   getMediaAccess(): Promise<MediaAccess | undefined>;
+  getLyrics(track: LyricsTrack): Promise<SyncedLyrics | undefined>;
   setTaskbarPlaybackState(state: TaskbarPlaybackState): void;
   onTaskbarPlaybackCommand(listener: (command: PlaybackCommand) => void): () => void;
   getPlaylists(): Promise<Playlist[]>;
