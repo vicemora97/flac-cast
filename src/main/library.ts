@@ -14,6 +14,7 @@ type CachedTrack = {
   title: string;
   artist: string;
   album: string;
+  albumArtist?: string;
   durationSeconds?: number;
   sampleRate?: number;
   bitsPerSample?: number;
@@ -120,6 +121,7 @@ export class LibraryManager {
       title: metadata.common.title ?? basename(file.filePath, extname(file.filePath)),
       artist: metadata.common.artist ?? "Unknown artist",
       album: metadata.common.album ?? "Unknown album",
+      albumArtist: metadata.common.albumartist ?? undefined,
       durationSeconds: metadata.format.duration,
       sampleRate: metadata.format.sampleRate,
       bitsPerSample: metadata.format.bitsPerSample,
@@ -145,7 +147,7 @@ export class LibraryManager {
         ? await getOrCreateArtworkEndpoint(record.artwork, this.artworkFolder, this.mediaServer, artworkEndpoints)
         : undefined;
       return {
-        id: record.id, title: record.title, artist: record.artist, album: record.album,
+        id: record.id, title: record.title, artist: record.artist, album: record.album, albumArtist: record.albumArtist,
         durationSeconds: record.durationSeconds, sampleRate: record.sampleRate, bitsPerSample: record.bitsPerSample,
         trackNumber: record.trackNumber, discNumber: record.discNumber,
         artworkUrl: artwork?.localUrl, castArtworkUrl: artwork?.castUrl,

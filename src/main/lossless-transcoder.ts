@@ -31,6 +31,7 @@ export class LosslessTranscoder {
   private readonly cacheFolder = join(tmpdir(), "hires-local", "wav-cache");
   private readonly flacInProgress = new Map<string, Promise<PreparedFlac>>();
   private readonly wavInProgress = new Map<string, Promise<string>>();
+  private readonly cacheReservations = new Map<string, number>();
   private activeFilePath?: string;
 
   isAvailable(): boolean {
@@ -56,6 +57,7 @@ export class LosslessTranscoder {
       const outputStat = await stat(outputPath);
       if (outputStat.size > 42) {
         await touch(outputPath);
+        await this.pruneCache(outputPath);
         return { filePath: outputPath, repacked, metadataBytes: inspection.metadataBytes };
       }
       await unlink(outputPath);
@@ -64,8 +66,12 @@ export class LosslessTranscoder {
     const existing = this.flacInProgress.get(outputPath);
     if (existing) return existing;
 
+    this.cacheReservations.set(outputPath, sourceStat.size);
     const preparation = this.createPreparedFlac(sourcePath, outputPath, inspection, repacked)
-      .finally(() => this.flacInProgress.delete(outputPath));
+      .finally(() => {
+        this.flacInProgress.delete(outputPath);
+        this.cacheReservations.delete(outputPath);
+      });
     this.flacInProgress.set(outputPath, preparation);
     return preparation;
   }
@@ -82,6 +88,7 @@ export class LosslessTranscoder {
       const outputStat = await stat(outputPath);
       if (outputStat.size > 44) {
         await touch(outputPath);
+        await this.pruneCache(outputPath);
         return outputPath;
       }
       await unlink(outputPath);
@@ -103,6 +110,7 @@ export class LosslessTranscoder {
     repacked: boolean
   ): Promise<PreparedFlac> {
     await mkdir(this.cacheFolder, { recursive: true });
+    await this.pruneCache(outputPath);
     const temporaryPath = join(this.cacheFolder, `${basename(outputPath, ".flac")}.${randomUUID()}.tmp.flac`);
     try {
       if (repacked) {
@@ -163,12 +171,17 @@ export class LosslessTranscoder {
         currentPath,
         ...(this.activeFilePath ? [this.activeFilePath] : []),
         ...this.flacInProgress.keys(),
-        ...this.wavInProgress.keys()
+        ...this.wavInProgress.keys(),
+        ...this.cacheReservations.keys()
       ]);
       const protectedItems = cached.filter((item) => protectedPaths.has(item.path));
+      const cachedPaths = new Set(cached.map((item) => item.path));
+      const pendingReservations = [...this.cacheReservations.entries()]
+        .filter(([path]) => !cachedPaths.has(path));
       const keep = new Set(protectedItems.map((item) => item.path));
-      let keptFiles = protectedItems.length;
-      let keptBytes = protectedItems.reduce((sum, item) => sum + item.size, 0);
+      let keptFiles = protectedItems.length + pendingReservations.length;
+      let keptBytes = protectedItems.reduce((sum, item) => sum + item.size, 0)
+        + pendingReservations.reduce((sum, [, size]) => sum + size, 0);
 
       for (const item of cached) {
         if (keep.has(item.path)) continue;

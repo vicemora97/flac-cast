@@ -126,8 +126,11 @@ export class CastController {
       metadataType: 3,
       title: track.title,
       artist: track.artist,
-      albumName: track.album
+      albumName: track.album,
+      albumArtist: track.albumArtist || track.artist
     };
+    if (isPositiveInteger(track.trackNumber)) metadata.trackNumber = track.trackNumber;
+    if (isPositiveInteger(track.discNumber)) metadata.discNumber = track.discNumber;
     if (track.castArtworkUrl) metadata.images = [{ url: track.castArtworkUrl }];
 
     this.state = {
@@ -409,6 +412,10 @@ function textValue(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (Buffer.isBuffer(value)) return value.toString("utf8");
   return value == null ? undefined : String(value);
+}
+
+function isPositiveInteger(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {

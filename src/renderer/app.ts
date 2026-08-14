@@ -1,5 +1,6 @@
 import type { CastDevice, CastState, LibraryResult, Playlist, SyncedLyrics, Track } from "../shared/contracts.js";
 import { getLanguage, normalizeLanguage, setLanguage, t, type AppLanguage } from "./i18n.js";
+import type { SearchTrackRecord, SearchWorkerRequest, SearchWorkerResponse } from "./search-types.js";
 
 type Album = {
   key: string;
@@ -23,6 +24,9 @@ type TrackSort = "artist" | "title" | "quality";
 type PlaybackSource = "scheduled" | "manual";
 type PlaybackHistoryEntry = { track: Track; source: PlaybackSource; scheduledIndex: number };
 
+const SEARCH_DEBOUNCE_MS = 90;
+const SEARCH_RENDER_LIMIT = 200;
+
 const languageSelect = document.querySelector<HTMLSelectElement>("#language")!;
 const chooseButton = document.querySelector<HTMLButtonElement>("#choose-folder")!;
 const libraryPanel = document.querySelector<HTMLElement>("#library-panel")!;
@@ -37,6 +41,7 @@ const viewTabs = document.querySelector<HTMLElement>(".view-tabs")!;
 const folderLabel = document.querySelector<HTMLElement>("#folder")!;
 const countLabel = document.querySelector<HTMLElement>("#count")!;
 const librarySearch = document.querySelector<HTMLInputElement>("#library-search")!;
+const searchIndexStatus = document.querySelector<HTMLElement>("#search-index-status")!;
 const trackSortControl = document.querySelector<HTMLElement>("#track-sort-control")!;
 const trackSortSelect = document.querySelector<HTMLSelectElement>("#track-sort")!;
 const libraryActivity = document.querySelector<HTMLElement>("#library-activity")!;
@@ -137,14 +142,23 @@ let currentLyrics: SyncedLyrics | undefined;
 let lyricsRequest = 0;
 let activeLyricsLine = -1;
 let searchQuery = "";
+let searchWorker: Worker | undefined;
+let searchWorkerFailed = false;
+let searchIndexReady = false;
+let searchIndexGeneration = 0;
+let searchRequestId = 0;
+let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+let searchTrackSignatures = new Map<string, string>();
 let trackSort = normalizeTrackSort(localStorage.getItem("flac-cast-track-sort"));
 let sessionRestored = false;
 let nowArtistMarqueeFrame: number | undefined;
 const viewScrollPositions: Partial<Record<LibraryView, number>> = {};
 const artworkAccentCache = new Map<string, Promise<string>>();
+const libraryTrackById = new Map<string, Track>();
 
 initializeUiScale();
 initializeLanguage();
+initializeSearchWorker();
 trackSortSelect.value = trackSort;
 trackSortSelect.addEventListener("change", () => {
   trackSort = normalizeTrackSort(trackSortSelect.value);
@@ -158,9 +172,13 @@ albumsTab.addEventListener("click", () => openLibraryView("albums"));
 artistsTab.addEventListener("click", () => openLibraryView("artists"));
 playlistsTab.addEventListener("click", () => openLibraryView("playlists"));
 librarySearch.addEventListener("input", () => {
-  searchQuery = librarySearch.value.trim().toLocaleLowerCase();
+  searchQuery = librarySearch.value.trim();
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
   if (searchQuery) showSearchResults();
-  else renderCurrentView();
+  else {
+    searchRequestId += 1;
+    renderCurrentView();
+  }
 });
 previousTrackButton.addEventListener("click", () => void playPrevious());
 nextTrackButton.addEventListener("click", () => void playNext());
@@ -324,7 +342,10 @@ window.addEventListener("resize", () => {
 window.addEventListener("scroll", () => {
   viewScrollPositions[getCurrentView()] = window.scrollY;
 }, { passive: true });
-window.addEventListener("beforeunload", savePlaybackSession);
+window.addEventListener("beforeunload", () => {
+  savePlaybackSession();
+  searchWorker?.terminate();
+});
 document.addEventListener("visibilitychange", handleVisibilityChange);
 window.hires.onLibraryActivity((active) => { libraryActivity.hidden = !active; });
 scheduleCastRefresh(0);
@@ -411,8 +432,90 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function initializeSearchWorker(): void {
+  try {
+    const worker = new Worker("./search-worker.js", { name: "flac-cast-search" });
+    searchWorker = worker;
+    worker.addEventListener("message", (event: MessageEvent<SearchWorkerResponse>) => {
+      const message = event.data;
+      if (message.type === "ready") {
+        if (message.generation !== searchIndexGeneration) return;
+        searchIndexReady = true;
+        searchIndexStatus.hidden = true;
+        if (searchQuery) showSearchResults(0);
+        return;
+      }
+      if (message.requestId !== searchRequestId || !searchQuery) return;
+      renderIndexedSearchResults(message.ids, message.total);
+    });
+    worker.addEventListener("error", () => {
+      searchWorkerFailed = true;
+      searchIndexReady = false;
+      searchIndexStatus.hidden = true;
+      worker.terminate();
+      if (searchWorker === worker) searchWorker = undefined;
+      if (searchQuery) renderFallbackSearchResults();
+    });
+  } catch {
+    searchWorkerFailed = true;
+    searchIndexStatus.hidden = true;
+  }
+}
+
+function syncSearchIndex(tracks: Track[]): void {
+  if (!searchWorker || searchWorkerFailed) return;
+  const nextSignatures = new Map<string, string>();
+  const upsert: SearchTrackRecord[] = [];
+  tracks.forEach((track) => {
+    const signature = `${track.title}\0${track.artist}\0${track.album}\0${track.bitsPerSample ?? ""}\0${track.sampleRate ?? ""}`;
+    nextSignatures.set(track.id, signature);
+    if (searchTrackSignatures.get(track.id) !== signature) {
+      upsert.push({
+        id: track.id,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        bitsPerSample: track.bitsPerSample,
+        sampleRate: track.sampleRate
+      });
+    }
+  });
+  const remove = [...searchTrackSignatures.keys()].filter((id) => !nextSignatures.has(id));
+  searchTrackSignatures = nextSignatures;
+  if (upsert.length === 0 && remove.length === 0 && searchIndexReady) return;
+
+  searchIndexReady = false;
+  searchIndexStatus.hidden = false;
+  searchRequestId += 1;
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  const generation = ++searchIndexGeneration;
+  const request: SearchWorkerRequest = { type: "sync", generation, upsert, remove };
+  try {
+    searchWorker.postMessage(request);
+  } catch {
+    searchWorkerFailed = true;
+    searchIndexReady = false;
+    searchIndexStatus.hidden = true;
+    searchWorker.terminate();
+    searchWorker = undefined;
+  }
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
 function applyLibraryResult(result: LibraryResult, view: LibraryView): void {
   updateLibraryState(result);
+  if (searchQuery) {
+    showSearchResults(0);
+    return;
+  }
   if (view === "albums") showAlbums();
   else if (view === "artists") showArtists();
   else if (view === "playlists") showPlaylists();
@@ -430,26 +533,86 @@ function renderCurrentView(): void {
 function openLibraryView(view: LibraryView): void {
   searchQuery = "";
   librarySearch.value = "";
+  searchRequestId += 1;
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
   if (view === "albums") showAlbums();
   else if (view === "artists") showArtists();
   else if (view === "playlists") showPlaylists();
   else showTracks();
 }
 
-function showSearchResults(): void {
+function showSearchResults(delay = SEARCH_DEBOUNCE_MS): void {
+  if (!searchQuery) return;
+  const requestId = ++searchRequestId;
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  if (searchWorkerFailed || !searchWorker) {
+    renderFallbackSearchResults();
+    return;
+  }
+  if (!searchIndexReady) {
+    trackList.className = "tracks search-results";
+    trackList.replaceChildren(createTextElement("div", "empty", t("preparingSearch")));
+    countLabel.textContent = t("indexingSearch");
+    return;
+  }
+
+  searchDebounceTimer = setTimeout(() => {
+    searchDebounceTimer = undefined;
+    if (requestId !== searchRequestId || !searchQuery || !searchWorker || !searchIndexReady) return;
+    const request: SearchWorkerRequest = {
+      type: "search",
+      requestId,
+      query: searchQuery,
+      sort: trackSort,
+      language: getLanguage()
+    };
+    try {
+      searchWorker.postMessage(request);
+    } catch {
+      searchWorkerFailed = true;
+      searchIndexReady = false;
+      searchIndexStatus.hidden = true;
+      renderFallbackSearchResults();
+    }
+  }, delay);
+}
+
+function renderIndexedSearchResults(ids: string[], total: number): void {
+  const matches = ids.flatMap((id) => libraryTrackById.get(id) ?? []);
+  renderSearchMatches(matches, total);
+}
+
+function renderFallbackSearchResults(): void {
+  const terms = normalizeSearchText(searchQuery).split(" ").filter(Boolean);
+  if (terms.length === 0) {
+    renderSearchMatches([], 0);
+    return;
+  }
+  const matches = sortTracks(libraryTracks.filter((track) => {
+    const text = normalizeSearchText(`${track.title}\n${track.artist}\n${track.album}`);
+    return terms.every((term) => text.includes(term));
+  }), trackSort);
+  renderSearchMatches(matches, matches.length);
+}
+
+function renderSearchMatches(matches: Track[], total: number): void {
   trackList.className = "tracks search-results";
   trackList.replaceChildren();
-  const matches = sortTracks(libraryTracks.filter((track) => `${track.title}\n${track.artist}\n${track.album}`.toLocaleLowerCase().includes(searchQuery)), trackSort);
   if (matches.length === 0) {
     trackList.append(createTextElement("div", "empty", t("noMatches")));
   } else {
-    matches.forEach((track) => trackList.append(createTrackRow(track, matches)));
+    matches.slice(0, SEARCH_RENDER_LIMIT).forEach((track) => trackList.append(createTrackRow(track, matches)));
   }
-  countLabel.textContent = formatResultCount(matches.length);
+  countLabel.textContent = total > SEARCH_RENDER_LIMIT
+    ? `${formatResultCount(total)} · ${t("showingFirstResults", { count: SEARCH_RENDER_LIMIT })}`
+    : formatResultCount(total);
 }
 
 function updateLibraryState(result: LibraryResult): void {
   libraryTracks = result.tracks;
+  libraryTrackById.clear();
+  result.tracks.forEach((track) => libraryTrackById.set(track.id, track));
+  syncSearchIndex(result.tracks);
   libraryFolders = result.folders;
   folderLabel.textContent = result.folders.length === 0
     ? t("noFolders")

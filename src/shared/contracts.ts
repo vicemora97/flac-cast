@@ -3,6 +3,7 @@ export type Track = {
   title: string;
   artist: string;
   album: string;
+  albumArtist?: string;
   durationSeconds?: number;
   sampleRate?: number;
   bitsPerSample?: number;
@@ -37,7 +38,7 @@ export type CastState = {
   deliveryPhase?: "preparing" | "loading" | "converting" | "playing" | "failed";
 };
 
-export type CastTrack = Pick<Track, "title" | "artist" | "album" | "durationSeconds" | "sampleRate" | "bitsPerSample" | "castUrl" | "castArtworkUrl">;
+export type CastTrack = Pick<Track, "title" | "artist" | "album" | "albumArtist" | "trackNumber" | "discNumber" | "durationSeconds" | "sampleRate" | "bitsPerSample" | "castUrl" | "castArtworkUrl">;
 
 export type LyricsTrack = Pick<Track, "title" | "artist" | "album" | "durationSeconds">;
 

@@ -50,6 +50,12 @@ Playlists are stored locally. A playlist can have a custom name and square artwo
 
 Search matches track title, artist, and album. Press `Ctrl+F` to focus the search field. Selecting a search result uses the current result set as its scheduled playback context.
 
+The search index is prepared in the background from cached metadata. It does not open or decode FLAC files, and it does not need to reread a NAS library. An **Indexing…** indicator may appear briefly after launch or after a library update. New, changed, and removed tracks are synchronized incrementally.
+
+Search is case-insensitive and accent-insensitive, so `beyonce` can match `Beyoncé`. Multiple words may match across title, artist, and album. Sorting is performed by the background index using the current Tracks sort option.
+
+For large result sets, Flac Cast displays the first 200 rows and reports the full number of matches. The complete result set is still retained as the scheduled playback context, so Next, Previous, Shuffle, and queue behavior are not limited to those 200 visible rows.
+
 ## Playback controls
 
 The footer provides Previous, Play/Pause, Next, Shuffle, Repeat, time, seek, and volume controls.

@@ -12,6 +12,14 @@ Flac Cast is both a Cast controller and a temporary HTTP origin. The receiver do
 
 The PC and receiver must be mutually reachable on the same local network. Guest Wi-Fi, client isolation, VPN routes, virtual adapters, and public-network firewall rules can prevent discovery or streaming.
 
+## Receiver identity and music metadata
+
+Flac Cast currently launches Google's free Default Media Receiver. Consequently, Google Home and other remote-control surfaces may identify the session as **Default Media Receiver**; that application name is owned by Google and cannot be changed through track metadata.
+
+Each load request uses Cast's music-track metadata type and sends title, track artist, album, album artist, track number, disc number, duration, and album artwork when available. Older cached library records may not contain a distinct album-artist tag, so Flac Cast safely uses the track artist as the album artist until that file is rescanned. The fields shown by Google Home, a soundbar application, or a device display remain receiver-dependent.
+
+Using a branded application name would require a registered Styled or Custom Media Receiver and its Cast application ID. It is not required for audio playback.
+
 ## Discovery
 
 The controller browses `_googlecast._tcp` services with `bonjour-service`. It remembers receiver name, model, host, ID, and last-seen time. Cached mDNS services are synchronized before stale entries expire, and active searches are refreshed so newly powered receivers appear.
@@ -51,6 +59,8 @@ This describes what Flac Cast sends. It cannot guarantee that a TV, soundbar, HD
 ## Prewarming
 
 After a Cast session starts, the renderer schedules preparation for up to five upcoming tracks. Preparation is staggered and uses the disk cache instead of retaining complete tracks in RAM. This reduces the pause between tracks without loading the entire queue.
+
+Manually added FIFO tracks take priority over the scheduled queue. When that priority window changes, new uncached FLAC files reserve cache capacity before they are copied; older unprotected preparations are removed first when the eight-file or 1 GiB limit would be exceeded.
 
 Prewarming is canceled when the Cast generation changes or the receiver disconnects.
 

@@ -36,6 +36,14 @@ await Promise.all([
     format: "iife",
     target: "chrome138",
     outfile: fromRoot("dist/renderer/app.js")
+  }),
+  build({
+    entryPoints: [fromRoot("src/renderer/search-worker.ts")],
+    bundle: true,
+    platform: "browser",
+    format: "iife",
+    target: "chrome138",
+    outfile: fromRoot("dist/renderer/search-worker.js")
   })
 ]);
 

@@ -16,6 +16,8 @@ Selected FLAC libraries
         +-------------> LAN URL ----------> Google Cast receiver
 
 Renderer UI <---- typed IPC ----> preload bridge <---- IPC ----> main process
+    |
+    +----> search Web Worker ----> normalized in-memory search index
 ```
 
 ## Process boundaries
@@ -53,6 +55,16 @@ The main entry point is `src/main/main.ts`.
 - English/Spanish localization.
 
 The renderer is context-isolated, has Node integration disabled, and runs with Electron sandboxing enabled.
+
+### Background search index
+
+`src/renderer/search-worker.ts` owns a compact, in-memory index containing only each track ID, title, artist, album, bit depth, and sample rate. Text is normalized once when a track is added or changed: Unicode accents are removed, case is folded, and punctuation becomes spaces. Searches therefore avoid repeatedly normalizing the full library on the renderer thread.
+
+The renderer sends incremental synchronization messages to the worker. Unchanged records are identified by lightweight signatures and are not resent; removed tracks are deleted explicitly. The worker filters and sorts matches away from the UI thread, then returns stable track IDs. A 90 ms input debounce avoids obsolete work while typing.
+
+Search keeps every matching ID as the playback context, but creates at most 200 track-row DOM nodes. This bounds layout and rendering cost for very large libraries without shortening the playable result queue. The status inside the search field reports the brief initial indexing phase. If Web Workers are unavailable, the renderer falls back to the previous synchronous search path so the feature remains usable.
+
+The search index is intentionally not another disk database. At launch it is rebuilt from the already persisted metadata cache, so it does not read FLAC audio or reconnect to the NAS. Its memory cost grows with short textual metadata rather than audio-file size.
 
 ## Main modules
 
