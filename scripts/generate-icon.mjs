@@ -1,7 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { deflateSync } from "node:zlib";
+
+const run = promisify(execFile);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outputFolder = join(root, "assets");
@@ -17,6 +21,22 @@ await Promise.all([
   writeIfChanged(join(outputFolder, "thumbar-pause.png"), createPng(32, glyphColor("pause"))),
   writeIfChanged(join(outputFolder, "thumbar-next.png"), createPng(32, glyphColor("next")))
 ]);
+
+if (process.platform === "darwin") await writeIcns(outputFolder);
+
+async function writeIcns(outputFolder) {
+  const iconset = join(outputFolder, "icon.iconset");
+  await rm(iconset, { recursive: true, force: true });
+  await mkdir(iconset, { recursive: true });
+  await Promise.all(
+    [16, 32, 128, 256, 512].flatMap((size) => [
+      writeFile(join(iconset, `icon_${size}x${size}.png`), createPng(size)),
+      writeFile(join(iconset, `icon_${size}x${size}@2x.png`), createPng(size * 2))
+    ])
+  );
+  await run("iconutil", ["-c", "icns", iconset, "-o", join(outputFolder, "icon.icns")]);
+  await rm(iconset, { recursive: true, force: true });
+}
 
 async function writeIfChanged(path, content) {
   try {
