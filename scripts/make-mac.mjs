@@ -13,7 +13,7 @@ if (!appOutputDirectory) throw new Error("Electron Packager no devolvió la carp
 const appBundle = join(appOutputDirectory, "Flac Cast.app");
 const stagingDirectory = join(projectRoot, "out", "dmg-staging");
 const outputDirectory = join(projectRoot, "out", "make", "dmg");
-const dmgPath = join(outputDirectory, "Flac Cast.dmg");
+const dmgPath = join(outputDirectory, "Flac-Cast-macOS-arm64.dmg");
 
 await rm(stagingDirectory, { recursive: true, force: true });
 await rm(outputDirectory, { recursive: true, force: true });

@@ -54,8 +54,8 @@ npm run make:mac      # macOS only
 Release artifacts are created under:
 
 ```text
-out/make/squirrel.windows/x64/Flac Cast Setup.exe
-out/make/dmg/Flac Cast.dmg
+out/make/squirrel.windows/x64/Flac-Cast-Windows-x64-Setup.exe
+out/make/dmg/Flac-Cast-macOS-arm64.dmg
 ```
 
 The current Windows installer is unsigned, and the macOS build is not Developer ID signed or notarized. Smart App Control, SmartScreen, or Gatekeeper may block these artifacts. Development can continue from a source checkout; public distribution should use trusted platform signing.

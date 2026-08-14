@@ -92,6 +92,8 @@ export type LibraryResult = {
 };
 
 export type HiresApi = {
+  getAppVersion(): Promise<string>;
+  openRepository(): Promise<boolean>;
   setLanguage(language: "en" | "es"): Promise<"en" | "es">;
   setUiScale(scale: number): Promise<number>;
   loadSavedLibrary(): Promise<LibraryResult>;

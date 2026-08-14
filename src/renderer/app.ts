@@ -19,7 +19,7 @@ type Artist = {
 
 type IconName = "play" | "pause" | "cast" | "music" | "folder" | "trash" | "playlist" | "plus" | "queue" | "more" | "edit" | "x";
 type RepeatMode = "off" | "album" | "track";
-type LibraryView = "tracks" | "albums" | "artists" | "playlists";
+type LibraryView = "tracks" | "albums" | "artists" | "playlists" | "about";
 type TrackSort = "artist" | "title" | "quality";
 type PlaybackSource = "scheduled" | "manual";
 type PlaybackHistoryEntry = { track: Track; source: PlaybackSource; scheduledIndex: number };
@@ -37,6 +37,7 @@ const tracksTab = document.querySelector<HTMLButtonElement>("#tracks-tab")!;
 const albumsTab = document.querySelector<HTMLButtonElement>("#albums-tab")!;
 const artistsTab = document.querySelector<HTMLButtonElement>("#artists-tab")!;
 const playlistsTab = document.querySelector<HTMLButtonElement>("#playlists-tab")!;
+const aboutTab = document.querySelector<HTMLButtonElement>("#about-tab")!;
 const viewTabs = document.querySelector<HTMLElement>(".view-tabs")!;
 const folderLabel = document.querySelector<HTMLElement>("#folder")!;
 const countLabel = document.querySelector<HTMLElement>("#count")!;
@@ -152,6 +153,7 @@ let searchTrackSignatures = new Map<string, string>();
 let trackSort = normalizeTrackSort(localStorage.getItem("flac-cast-track-sort"));
 let sessionRestored = false;
 let nowArtistMarqueeFrame: number | undefined;
+let appVersion = "";
 const viewScrollPositions: Partial<Record<LibraryView, number>> = {};
 const artworkAccentCache = new Map<string, Promise<string>>();
 const libraryTrackById = new Map<string, Track>();
@@ -159,6 +161,10 @@ const libraryTrackById = new Map<string, Track>();
 initializeUiScale();
 initializeLanguage();
 initializeSearchWorker();
+void window.hires.getAppVersion().then((version) => {
+  appVersion = version;
+  if (getCurrentView() === "about") showAbout();
+});
 trackSortSelect.value = trackSort;
 trackSortSelect.addEventListener("change", () => {
   trackSort = normalizeTrackSort(trackSortSelect.value);
@@ -171,6 +177,7 @@ tracksTab.addEventListener("click", () => openLibraryView("tracks"));
 albumsTab.addEventListener("click", () => openLibraryView("albums"));
 artistsTab.addEventListener("click", () => openLibraryView("artists"));
 playlistsTab.addEventListener("click", () => openLibraryView("playlists"));
+aboutTab.addEventListener("click", () => openLibraryView("about"));
 librarySearch.addEventListener("input", () => {
   searchQuery = librarySearch.value.trim();
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
@@ -519,6 +526,7 @@ function applyLibraryResult(result: LibraryResult, view: LibraryView): void {
   if (view === "albums") showAlbums();
   else if (view === "artists") showArtists();
   else if (view === "playlists") showPlaylists();
+  else if (view === "about") showAbout();
   else showTracks();
 }
 
@@ -527,6 +535,7 @@ function renderCurrentView(): void {
   if (view === "albums") showAlbums();
   else if (view === "artists") showArtists();
   else if (view === "playlists") showPlaylists();
+  else if (view === "about") showAbout();
   else showTracks();
 }
 
@@ -538,6 +547,7 @@ function openLibraryView(view: LibraryView): void {
   if (view === "albums") showAlbums();
   else if (view === "artists") showArtists();
   else if (view === "playlists") showPlaylists();
+  else if (view === "about") showAbout();
   else showTracks();
 }
 
@@ -659,6 +669,7 @@ function getCurrentView(): LibraryView {
   if (albumsTab.classList.contains("active")) return "albums";
   if (artistsTab.classList.contains("active")) return "artists";
   if (playlistsTab.classList.contains("active")) return "playlists";
+  if (aboutTab.classList.contains("active")) return "about";
   return "tracks";
 }
 
@@ -811,6 +822,61 @@ function showPlaylists(): void {
     wrapper.append(button, menuButton);
     trackList.append(wrapper);
   }
+}
+
+function showAbout(): void {
+  setActiveTab("about");
+  trackList.className = "about-view";
+  trackList.replaceChildren();
+
+  const hero = document.createElement("section");
+  hero.className = "about-hero";
+  hero.append(
+    createTextElement("span", "eyebrow", t("aboutApp")),
+    createTextElement("h2", "", "Flac Cast"),
+    createTextElement("p", "about-lead", t("aboutDescription")),
+    createTextElement("span", "about-version", t("versionLabel", { version: appVersion || "…" }))
+  );
+
+  const credits = document.createElement("section");
+  credits.className = "about-card";
+  credits.append(createTextElement("h3", "", t("credits")));
+  const creditList = document.createElement("div");
+  creditList.className = "about-credit-list";
+  creditList.append(
+    createAboutCredit(t("createdBy"), "@vicemora97"),
+    createAboutCredit(t("macosPackaging"), "@zebbariasn")
+  );
+  credits.append(creditList);
+
+  const project = document.createElement("section");
+  project.className = "about-card";
+  project.append(
+    createTextElement("h3", "", t("project")),
+    createTextElement("p", "about-copy", t("builtWith"))
+  );
+  const repository = createTextElement("button", "about-link", t("openRepository")) as HTMLButtonElement;
+  repository.addEventListener("click", async () => {
+    repository.disabled = true;
+    try {
+      await window.hires.openRepository();
+    } finally {
+      repository.disabled = false;
+    }
+  });
+  project.append(repository);
+
+  const grid = document.createElement("div");
+  grid.className = "about-grid";
+  grid.append(credits, project);
+  trackList.append(hero, grid);
+}
+
+function createAboutCredit(role: string, name: string): HTMLElement {
+  const credit = document.createElement("div");
+  credit.className = "about-credit";
+  credit.append(createTextElement("span", "", role), createTextElement("strong", "", name));
+  return credit;
 }
 
 function showPlaylistDetail(playlistId: string): void {
@@ -1760,6 +1826,8 @@ function setActiveTab(tab: LibraryView): void {
   albumsTab.classList.toggle("active", tab === "albums");
   artistsTab.classList.toggle("active", tab === "artists");
   playlistsTab.classList.toggle("active", tab === "playlists");
+  aboutTab.classList.toggle("active", tab === "about");
+  viewTabs.closest(".library-toolbar")?.classList.toggle("about-active", tab === "about");
   trackSortControl.hidden = tab !== "tracks";
   positionActiveTabIndicator();
   if (changed) requestAnimationFrame(() => window.scrollTo({ top: viewScrollPositions[tab] ?? 0 }));

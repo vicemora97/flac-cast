@@ -30,8 +30,8 @@ npm.cmd run make:win
 
 Expected files:
 
-- `out/make/squirrel.windows/x64/Flac Cast Setup.exe`
-- `out/make/squirrel.windows/x64/Flac Cast Setup.exe.sha256`
+- `out/make/squirrel.windows/x64/Flac-Cast-Windows-x64-Setup.exe`
+- `out/make/squirrel.windows/x64/Flac-Cast-Windows-x64-Setup.exe.sha256`
 
 ### macOS Apple silicon
 
@@ -42,8 +42,8 @@ npm run make:mac
 
 Expected files:
 
-- `out/make/dmg/Flac Cast.dmg`
-- `out/make/dmg/Flac Cast.dmg.sha256`
+- `out/make/dmg/Flac-Cast-macOS-arm64.dmg`
+- `out/make/dmg/Flac-Cast-macOS-arm64.dmg.sha256`
 
 The current macOS build targets `arm64`. Do not build it on an Intel dependency installation because the bundled `ffmpeg-static` binary follows the host platform and architecture.
 
@@ -65,3 +65,5 @@ The Windows installer is unsigned, and the macOS application is neither Develope
 6. Create a GitHub release from that tag and paste the corresponding changelog section.
 7. Attach native artifacts and their SHA-256 checksum files.
 8. Mark unsigned builds as a prerelease until signing and platform reputation requirements are addressed.
+
+Keep a release as a draft until both native artifacts come from the tagged commit. Publish one release containing the Windows and macOS installers so visitors can choose their operating system from a single download page.

@@ -11,7 +11,8 @@ const outputDirectory = join(projectRoot, "out", "make", "squirrel.windows", "x6
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
 
-const setupPath = join(outputDirectory, "Flac Cast Setup.exe");
+const setupFileName = "Flac-Cast-Windows-x64-Setup.exe";
+const setupPath = join(outputDirectory, setupFileName);
 await installer.createWindowsInstaller({
   appDirectory,
   outputDirectory,
@@ -19,7 +20,7 @@ await installer.createWindowsInstaller({
   description: "Reproductor local FLAC Hi-Res con Google Cast",
   exe: "Flac Cast.exe",
   name: "FlacCast",
-  setupExe: "Flac Cast Setup.exe",
+  setupExe: setupFileName,
   setupIcon: join(projectRoot, "assets", "icon.ico"),
   title: "Flac Cast",
   noMsi: true

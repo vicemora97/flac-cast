@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { HiresApi } from "../shared/contracts.js";
 
 const api: HiresApi = {
+  getAppVersion: () => ipcRenderer.invoke("app:version"),
+  openRepository: () => ipcRenderer.invoke("app:open-repository"),
   setLanguage: (language) => ipcRenderer.invoke("app:set-language", language),
   setUiScale: (scale) => ipcRenderer.invoke("ui:set-scale", scale),
   loadSavedLibrary: () => ipcRenderer.invoke("library:saved"),

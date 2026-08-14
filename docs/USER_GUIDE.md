@@ -1,5 +1,9 @@
 # User guide
 
+## About and credits
+
+Open **About**, the final library tab, to see the installed version, project credits, core technologies, and a shortcut to the GitHub repository. The view is available in English and Spanish and does not modify the music library.
+
 ## First launch
 
 Flac Cast opens in English by default. Use the language selector in the header to switch between English and Spanish. The choice is saved for future launches.

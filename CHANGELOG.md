@@ -6,6 +6,8 @@ All notable changes to Flac Cast are documented in this file.
 
 ### Changed
 
+- Added a localized About view with creator and macOS packaging credits, the running app version, and a repository shortcut.
+- Standardized Windows and macOS release artifact names for a shared GitHub release.
 - Updated Electron from 37.4.0 to 43.4.0 to include current security fixes.
 - Made Windows and macOS packagers infer the Electron version from the locked project dependency.
 - Synchronized the package manifest and lockfile version.

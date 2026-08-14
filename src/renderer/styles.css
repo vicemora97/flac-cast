@@ -31,6 +31,8 @@ header button:disabled { opacity: .55; cursor: wait; }
 .language-control select:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 main { padding: 22px 44px; }
 .library-toolbar { display: grid; grid-template-columns: auto minmax(220px, 390px) auto minmax(160px, 1fr); align-items: center; gap: 14px; margin-bottom: 18px; }
+.library-toolbar.about-active { grid-template-columns: auto; }
+.library-toolbar.about-active .search-control, .library-toolbar.about-active .sort-control, .library-toolbar.about-active .status { display: none; }
 .view-tabs { position: relative; display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); }
 .tab-indicator { position: absolute; z-index: 0; top: 4px; left: 0; width: var(--tab-pill-width, 60px); height: calc(100% - 8px); border-radius: 999px; background: var(--accent); transform: translateX(var(--tab-pill-x, 4px)); transition: transform .24s cubic-bezier(.2, .8, .2, 1), width .24s cubic-bezier(.2, .8, .2, 1); }
 .view-tab { position: relative; z-index: 1; border: 0; border-radius: 999px; padding: 8px 15px; background: transparent; color: var(--muted); cursor: pointer; transition: color .18s ease; }
@@ -169,6 +171,24 @@ audio { display: none; }
 .playlist-card span { margin-top: 5px; color: var(--muted); font-size: 12px; }
 .playlist-create-card { color: var(--muted); }
 .playlist-detail { display: grid; gap: 20px; }
+.about-view { display: grid; gap: 20px; max-width: 940px; margin: 16px auto 0; }
+.about-hero { position: relative; overflow: hidden; padding: clamp(28px, 5vw, 56px); border: 1px solid var(--line); border-radius: 20px; background: radial-gradient(circle at 86% 16%, rgba(199, 243, 107, .16), transparent 34%), linear-gradient(145deg, #20251f, #171a17); }
+.about-hero::after { content: ""; position: absolute; right: -52px; bottom: -82px; width: 230px; height: 230px; border: 1px solid rgba(199, 243, 107, .22); border-radius: 50%; }
+.about-hero h2 { margin: 8px 0 12px; font-size: clamp(40px, 7vw, 72px); line-height: .94; letter-spacing: -3px; }
+.about-lead { max-width: 580px; margin: 0; color: #c6ccc2; font-size: clamp(15px, 1.8vw, 19px); line-height: 1.55; }
+.about-version { display: inline-flex; margin-top: 24px; padding: 7px 11px; border: 1px solid #4c5546; border-radius: 999px; color: var(--accent); background: rgba(17, 19, 17, .45); font-size: 12px; font-weight: 750; }
+.about-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.about-card { min-width: 0; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.about-card h3 { margin: 0 0 18px; font-size: 18px; }
+.about-credit-list { display: grid; gap: 15px; }
+.about-credit { display: grid; gap: 3px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.about-credit:last-child { padding-bottom: 0; border-bottom: 0; }
+.about-credit span, .about-copy { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.about-credit strong { font-size: 14px; }
+.about-copy { margin: 0 0 20px; }
+.about-link { padding: 10px 14px; border: 1px solid var(--accent); border-radius: 10px; color: #11150d; background: var(--accent); font-weight: 750; cursor: pointer; }
+.about-link:hover:not(:disabled) { filter: brightness(1.06); }
+.about-link:disabled { opacity: .55; cursor: wait; }
 .playlist-detail-actions { display: flex; gap: 9px; margin-top: 16px; }
 .danger-button { padding: 8px 12px; border: 1px solid #573733; border-radius: 9px; color: #ffaaa0; background: #2a201e; cursor: pointer; }
 .secondary-button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; color: inherit; background: #252925; cursor: pointer; }
@@ -275,6 +295,7 @@ audio { display: none; }
   .quality { display: none; }
   .album-grid { grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap: 18px 13px; }
   .artist-grid { grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)); gap: 20px 13px; }
+  .about-grid { grid-template-columns: 1fr; }
   .album-track { grid-template-columns: 42px 1fr 58px; }
   .album-hero { align-items: center; }
   footer { grid-template-columns: 1fr; gap: 8px; padding: 12px 22px; }

@@ -214,6 +214,13 @@ ipcMain.handle("library:remove", async (_event, folder: string): Promise<Library
   return getLibraryResult();
 });
 
+ipcMain.handle("app:version", (): string => app.getVersion());
+
+ipcMain.handle("app:open-repository", async (): Promise<boolean> => {
+  await shell.openExternal("https://github.com/vicemora97/flac-cast");
+  return true;
+});
+
 ipcMain.handle("app:set-language", (_event, language: "en" | "es"): "en" | "es" => {
   appLanguage = language === "es" ? "es" : "en";
   for (const window of BrowserWindow.getAllWindows()) {
