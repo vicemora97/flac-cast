@@ -1,7 +1,7 @@
 {
   "name": "flac-cast",
   "productName": "Flac Cast",
-  "version": "0.1.2",
+  "version": "1.0.0",
   "private": true,
   "description": "Local hi-res FLAC player with Google Cast support",
   "author": "@vicemora97 and Flac Cast contributors",
@@ -13,7 +13,9 @@
     "check": "tsc --noEmit",
     "generate:icon": "node scripts/generate-icon.mjs",
     "package:win": "npm run build && npm run generate:icon && node scripts/package-windows.mjs",
-    "make:win": "npm run build && npm run generate:icon && node scripts/make-windows.mjs"
+    "make:win": "npm run build && npm run generate:icon && node scripts/make-windows.mjs",
+    "package:mac": "npm run build && npm run generate:icon && node scripts/package-mac.mjs",
+    "make:mac": "npm run build && npm run generate:icon && node scripts/make-mac.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
