@@ -16,6 +16,8 @@ app.setName("Flac Cast");
 // Conserva la ubicación histórica para no perder bibliotecas ni caché al renombrar la app.
 app.setPath("userData", join(app.getPath("appData"), "Hires Local"));
 app.setAppUserModelId("com.squirrel.FlacCast.FlacCast");
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.quit();
 
 const mediaServer = new MediaServer();
 const transcoder = new LosslessTranscoder();
@@ -39,7 +41,7 @@ const castController = new CastController(
     if (!sourcePath) throw new Error("No se encontró el archivo original para preparar el FLAC");
     const prepared = await transcoder.prepareFlac(sourcePath);
     transcoder.setActiveFile(prepared.filePath);
-    const endpoint = mediaServer.register(prepared.filePath);
+    const endpoint = mediaServer.register(prepared.filePath, castController.getReceiverHost());
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el FLAC preparado");
     return { url: endpoint.castUrl, repacked: prepared.repacked };
   },
@@ -49,7 +51,7 @@ const castController = new CastController(
     if (!sourcePath) throw new Error("No se encontró el archivo local para convertirlo");
     const wavPath = await transcoder.toWav(sourcePath, targetBits, track.sampleRate);
     transcoder.setActiveFile(wavPath);
-    const endpoint = mediaServer.register(wavPath);
+    const endpoint = mediaServer.register(wavPath, castController.getReceiverHost());
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el WAV");
     return endpoint.castUrl;
   }
@@ -291,7 +293,15 @@ ipcMain.handle("ui:set-scale", (event, scale: number) => {
 ipcMain.handle("cast:devices", () => castController.listDevices());
 ipcMain.handle("cast:state", (_event, refreshVolume = true) => refreshVolume ? castController.getFreshState() : castController.getState());
 ipcMain.handle("cast:connect", (_event, deviceId: string) => castController.connect(deviceId));
-ipcMain.handle("cast:track", (_event, track: CastTrack, startTimeSeconds?: number) => castController.castTrack(track, startTimeSeconds));
+ipcMain.handle("cast:track", (_event, track: CastTrack, startTimeSeconds?: number) => {
+  const receiverHost = castController.getReceiverHost();
+  const routedTrack: CastTrack = {
+    ...track,
+    castUrl: mediaServer.routeForReceiver(track.castUrl, receiverHost),
+    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
+  };
+  return castController.castTrack(routedTrack, startTimeSeconds);
+});
 ipcMain.handle("cast:command", (_event, command: "play" | "pause") => castController.command(command));
 ipcMain.handle("cast:seek", (_event, seconds: number) => castController.seek(seconds));
 ipcMain.handle("cast:volume", (_event, level: number) => castController.setVolume(level));
@@ -371,7 +381,15 @@ ipcMain.handle("playlist:remove-track", async (_event, playlistId: string, track
   return preferences.getPlaylists();
 });
 
-app.whenReady().then(async () => {
+app.on("second-instance", () => {
+  const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+  if (!window) return;
+  window.show();
+  if (window.isMinimized()) window.restore();
+  window.focus();
+});
+
+if (hasSingleInstanceLock) app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   registerMediaShortcuts();
   preferences = new PreferencesStore(app.getPath("userData"));

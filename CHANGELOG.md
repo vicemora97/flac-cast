@@ -16,6 +16,8 @@ All notable changes to Flac Cast are documented in this file.
 
 ### Fixed
 
+- Selected the LAN address that shares a subnet with the connected Cast receiver, preventing WSL, Hyper-V, Docker, VPN, and other virtual adapters from publishing unreachable media URLs.
+- Prevented multiple Flac Cast instances from starting competing Cast sessions and media servers.
 - Added complete Cast music metadata for album artist, track number, and disc number.
 - Moved library searching and sorting to a background index and bounded visible result rendering for large libraries.
 - Prioritized manually queued tracks within the bounded Cast preparation cache.

@@ -64,7 +64,7 @@ export class MediaServer {
     this.port = address.port;
   }
 
-  register(filePath: string): { id: string; localUrl: string; castUrl?: string } {
+  register(filePath: string, receiverAddress?: string): { id: string; localUrl: string; castUrl?: string } {
     if (!this.port) throw new Error("El servidor de audio no está iniciado");
     let id = this.fileIds.get(filePath);
     if (!id) {
@@ -73,13 +73,26 @@ export class MediaServer {
       this.files.set(id, filePath);
     }
     const route = `/media/${this.token}/${id}`;
-    const lanAddress = getLanIpv4();
+    const lanAddress = getLanIpv4(receiverAddress);
 
     return {
       id,
       localUrl: `http://127.0.0.1:${this.port}${route}`,
       castUrl: lanAddress ? `http://${lanAddress}:${this.port}${route}` : undefined
     };
+  }
+
+  routeForReceiver(sourceUrl: string | undefined, receiverAddress: string | undefined): string | undefined {
+    if (!sourceUrl) return undefined;
+    const lanAddress = getLanIpv4(receiverAddress);
+    if (!lanAddress) return undefined;
+    try {
+      const routed = new URL(sourceUrl);
+      routed.hostname = lanAddress;
+      return routed.toString();
+    } catch {
+      return undefined;
+    }
   }
 
   resolveFile(castUrl: string): string | undefined {
@@ -224,13 +237,36 @@ function createArtworkId(filePath: string): string {
   return createHash("sha256").update(filePath).digest("hex");
 }
 
-function getLanIpv4(): string | undefined {
-  for (const addresses of Object.values(networkInterfaces())) {
-    for (const address of addresses ?? []) {
-      if (address.family === "IPv4" && !address.internal && !address.address.startsWith("169.254.")) {
-        return address.address;
-      }
+function getLanIpv4(receiverAddress?: string): string | undefined {
+  const candidates = Object.entries(networkInterfaces()).flatMap(([name, addresses]) =>
+    (addresses ?? [])
+      .filter((address) => address.family === "IPv4" && !address.internal && !address.address.startsWith("169.254."))
+      .map((address) => ({ name, address: address.address, netmask: address.netmask }))
+  );
+
+  if (receiverAddress) {
+    const receiver = ipv4ToNumber(receiverAddress);
+    if (receiver !== undefined) {
+      const sameSubnet = candidates.find((candidate) => {
+        const local = ipv4ToNumber(candidate.address);
+        const mask = ipv4ToNumber(candidate.netmask);
+        return local !== undefined && mask !== undefined && (local & mask) === (receiver & mask);
+      });
+      if (sameSubnet) return sameSubnet.address;
     }
   }
-  return undefined;
+
+  return candidates.find((candidate) => !isVirtualInterface(candidate.name))?.address ?? candidates[0]?.address;
+}
+
+function ipv4ToNumber(value: string): number | undefined {
+  const parts = value.split(".");
+  if (parts.length !== 4) return undefined;
+  const bytes = parts.map(Number);
+  if (bytes.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return undefined;
+  return bytes.reduce((result, part) => ((result << 8) | part) >>> 0, 0);
+}
+
+function isVirtualInterface(name: string): boolean {
+  return /(?:vethernet|hyper-v|wsl|docker|virtualbox|vmware|tailscale|zerotier|vpn)/i.test(name);
 }

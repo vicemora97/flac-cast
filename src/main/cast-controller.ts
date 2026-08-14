@@ -59,6 +59,10 @@ export class CastController {
     return state;
   }
 
+  getReceiverHost(): string | undefined {
+    return this.state.deviceId ? this.devices.get(this.state.deviceId)?.host : undefined;
+  }
+
   async getFreshState(): Promise<CastState> {
     this.volumeRefresh ??= this.refreshVolume().finally(() => { this.volumeRefresh = undefined; });
     await this.volumeRefresh;
