@@ -166,6 +166,8 @@ async function createWindow(): Promise<void> {
         playlistsTab: Boolean(document.querySelector('#playlists-tab')),
         trackMenuButtons: document.querySelectorAll('.track-row .more-button').length,
         trackContextMenu,
+        activeTrackHighlighted: Boolean(document.querySelector('.track-row.current-track')),
+        equalizerBars: document.querySelectorAll('.track-row.current-track .playing-equalizer i').length,
         queuePanelVisible,
         queuePanelStateSynced,
         lyricsButton: Boolean(document.querySelector('#lyrics-button')),

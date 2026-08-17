@@ -72,6 +72,8 @@ The footer provides Previous, Play/Pause, Next, Shuffle, Repeat, time, seek, and
 
 The now-playing artist line has a compact width and automatically scrolls when the artist list is longer than the available area.
 
+The active track is highlighted in green anywhere it appears in a track list. A decorative three-bar equalizer beside its artwork animates while playback is active and remains still while paused. The animation is disabled when the operating system requests reduced motion.
+
 ## Queue model
 
 Open **Queue** to inspect playback order. Flac Cast deliberately separates:

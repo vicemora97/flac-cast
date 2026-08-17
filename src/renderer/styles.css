@@ -59,8 +59,22 @@ main { padding: 22px 44px; }
 .empty { padding: 70px 24px; text-align: center; color: var(--muted); }
 .track-row { display: grid; grid-template-columns: minmax(0, 1fr) 48px; align-items: stretch; border-bottom: 1px solid var(--line); content-visibility: auto; contain-intrinsic-size: auto 75px; }
 .track-row:last-child { border-bottom: 0; }
-.track { display: grid; grid-template-columns: 60px 1fr 160px 60px; width: 100%; align-items: center; gap: 15px; padding: 11px 15px; color: inherit; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.track { display: grid; grid-template-columns: 14px 60px 1fr 160px 60px; width: 100%; align-items: center; gap: 15px; padding: 11px 15px; color: inherit; border: 0; background: transparent; text-align: left; cursor: pointer; }
 .track:hover { background: #20241f; }
+.track-row.current-track { background: color-mix(in srgb, var(--accent) 7%, var(--panel)); box-shadow: inset 3px 0 var(--accent); }
+.track-row.current-track .track-copy strong { color: var(--accent); }
+.track-row.current-track .track-copy small, .track-row.current-track .number, .track-row.current-track .duration { color: color-mix(in srgb, var(--accent) 68%, var(--muted)); }
+.track-row.current-track .more-button { color: var(--accent); }
+.playing-equalizer { display: flex; align-items: flex-end; justify-content: space-between; width: 13px; height: 15px; opacity: 0; visibility: hidden; }
+.playing-equalizer i { width: 3px; height: 100%; border-radius: 2px; background: var(--accent); transform: scaleY(.28); transform-origin: bottom; }
+.playing-equalizer i:nth-child(2) { transform: scaleY(.68); }
+.playing-equalizer i:nth-child(3) { transform: scaleY(.42); }
+.track-row.current-track .playing-equalizer { opacity: 1; visibility: visible; }
+.track-row.track-playing .playing-equalizer i { animation: playing-equalizer-a .72s ease-in-out infinite; }
+.track-row.track-playing .playing-equalizer i:nth-child(2) { animation-name: playing-equalizer-b; animation-delay: -.24s; }
+.track-row.track-playing .playing-equalizer i:nth-child(3) { animation-delay: -.46s; }
+@keyframes playing-equalizer-a { 0%, 100% { transform: scaleY(.24); } 35% { transform: scaleY(1); } 68% { transform: scaleY(.48); } }
+@keyframes playing-equalizer-b { 0%, 100% { transform: scaleY(.72); } 38% { transform: scaleY(.3); } 72% { transform: scaleY(1); } }
 .track strong, .track small { display: block; }
 .track small, .number, .duration { color: var(--muted); }
 .track small { margin-top: 4px; }
@@ -90,7 +104,7 @@ main { padding: 22px 44px; }
 .album-hero-copy h2 { margin: 7px 0 10px; font-size: clamp(30px, 5vw, 58px); line-height: .98; letter-spacing: -2px; }
 .album-hero-copy p { font-size: 14px; }
 .album-songs { overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
-.album-track { grid-template-columns: 54px 1fr 160px 60px; padding: 14px 16px; }
+.album-track { grid-template-columns: 14px 54px 1fr 160px 60px; padding: 14px 16px; }
 .album-track .number { text-align: center; font-variant-numeric: tabular-nums; }
 .artist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(160px, 8.5vw, 195px), 1fr)); gap: 30px 22px; }
 .artist-grid > .empty { grid-column: 1 / -1; }
@@ -303,13 +317,13 @@ audio { display: none; }
   .library-toolbar { grid-template-columns: 1fr; align-items: flex-start; gap: 12px; }
   .search-control { width: 100%; }
   .status { width: 100%; justify-content: space-between; }
-  .track { grid-template-columns: 48px 1fr 62px; }
+  .track { grid-template-columns: 14px 48px 1fr 62px; }
   .artwork-track { width: 44px; height: 44px; }
   .quality { display: none; }
   .album-grid { grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap: 18px 13px; }
   .artist-grid { grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)); gap: 20px 13px; }
   .about-grid { grid-template-columns: 1fr; }
-  .album-track { grid-template-columns: 42px 1fr 58px; }
+  .album-track { grid-template-columns: 14px 42px 1fr 58px; }
   .album-hero { align-items: center; }
   footer { grid-template-columns: 1fr; gap: 8px; padding: 12px 22px; }
   .transport-controls { grid-template-columns: 40px minmax(250px, 1fr) 40px 40px 40px; }
@@ -330,4 +344,5 @@ audio { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .library-toolbar { transition: none; }
+  .track-row.track-playing .playing-equalizer i { animation: none; }
 }

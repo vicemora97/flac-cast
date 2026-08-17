@@ -201,6 +201,8 @@ repeatButton.addEventListener("click", toggleRepeat);
 player.addEventListener("ended", () => void playNext(true));
 player.addEventListener("play", updateTaskbarControls);
 player.addEventListener("pause", updateTaskbarControls);
+player.addEventListener("play", renderTrackPlaybackState);
+player.addEventListener("pause", renderTrackPlaybackState);
 player.addEventListener("pause", savePlaybackSession);
 player.addEventListener("play", renderLocalTransport);
 player.addEventListener("pause", renderLocalTransport);
@@ -1180,9 +1182,11 @@ type ContextMenuItem = {
 function createTrackRow(track: Track, context: Track[], options: TrackRowOptions = {}): HTMLElement {
   const row = document.createElement("div");
   row.className = "track-row";
+  row.dataset.trackId = track.id;
   const play = document.createElement("button");
   play.className = options.albumTrack ? "track album-track" : "track";
   play.append(
+    createPlayingEqualizer(),
     options.albumTrack
       ? createTextElement("span", "number", String(options.trackNumber ?? track.trackNumber ?? 1).padStart(2, "0"))
       : createArtwork(track.artworkUrl, "artwork-track"),
@@ -1202,7 +1206,31 @@ function createTrackRow(track: Track, context: Track[], options: TrackRowOptions
     openTrackContextMenu(track, { x: event.clientX, y: event.clientY }, options.playlistId);
   });
   row.append(play, more);
+  applyTrackPlaybackState(row, track.id);
   return row;
+}
+
+function createPlayingEqualizer(): HTMLElement {
+  const equalizer = document.createElement("span");
+  equalizer.className = "playing-equalizer";
+  equalizer.setAttribute("aria-hidden", "true");
+  equalizer.append(document.createElement("i"), document.createElement("i"), document.createElement("i"));
+  return equalizer;
+}
+
+function renderTrackPlaybackState(): void {
+  document.querySelectorAll<HTMLElement>(".track-row[data-track-id]").forEach((row) => {
+    applyTrackPlaybackState(row, row.dataset.trackId);
+  });
+}
+
+function applyTrackPlaybackState(row: HTMLElement, trackId: string | undefined): void {
+  const current = Boolean(trackId && selectedTrack?.id === trackId);
+  const playing = current && (currentCastState.connected
+    ? currentCastState.playerState === "PLAYING"
+    : !player.paused && !player.ended);
+  row.classList.toggle("current-track", current);
+  row.classList.toggle("track-playing", playing);
 }
 
 function createMoreButton(label: string): HTMLButtonElement {
@@ -1303,6 +1331,7 @@ async function clearDeletedCurrentTrack(): Promise<void> {
     }
   }
   selectedTrack = undefined;
+  renderTrackPlaybackState();
   lyricsRequest += 1;
   currentLyrics = undefined;
   lyricsViewState = "idle";
@@ -1478,6 +1507,7 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
       currentPlaybackSource = source;
     }
     selectedTrack = track;
+    renderTrackPlaybackState();
     prepareLyricsForTrack(track);
     autoAdvancedTrackId = undefined;
     updateQueueButtons();
@@ -1632,6 +1662,7 @@ async function connectCast(device: CastDevice, button: HTMLButtonElement): Promi
 
 function renderCastState(): void {
   const connected = currentCastState.connected;
+  renderTrackPlaybackState();
   renderPlaybackQuality();
   castControls.hidden = !connected;
   localPlayer.hidden = connected;
