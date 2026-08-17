@@ -39,6 +39,7 @@ const artistsTab = document.querySelector<HTMLButtonElement>("#artists-tab")!;
 const playlistsTab = document.querySelector<HTMLButtonElement>("#playlists-tab")!;
 const aboutTab = document.querySelector<HTMLButtonElement>("#about-tab")!;
 const viewTabs = document.querySelector<HTMLElement>(".view-tabs")!;
+const libraryToolbar = document.querySelector<HTMLElement>(".library-toolbar")!;
 const folderLabel = document.querySelector<HTMLElement>("#folder")!;
 const countLabel = document.querySelector<HTMLElement>("#count")!;
 const librarySearch = document.querySelector<HTMLInputElement>("#library-search")!;
@@ -140,6 +141,7 @@ let castRefreshInFlight = false;
 let lastDeviceRefreshAt = 0;
 let lastTaskbarSignature = "";
 let currentLyrics: SyncedLyrics | undefined;
+let lyricsViewState: "idle" | "loading" | "found" | "instrumental" | "missing" | "error" = "idle";
 let lyricsRequest = 0;
 let activeLyricsLine = -1;
 let searchQuery = "";
@@ -154,6 +156,11 @@ let trackSort = normalizeTrackSort(localStorage.getItem("flac-cast-track-sort"))
 let sessionRestored = false;
 let nowArtistMarqueeFrame: number | undefined;
 let appVersion = "";
+let toolbarScrollY = Math.max(0, window.scrollY);
+let toolbarScrollDirection = 0;
+let toolbarScrollDistance = 0;
+let toolbarScrollFrame: number | undefined;
+let toolbarRevealLockUntil = 0;
 const viewScrollPositions: Partial<Record<LibraryView, number>> = {};
 const artworkAccentCache = new Map<string, Promise<string>>();
 const libraryTrackById = new Map<string, Track>();
@@ -224,7 +231,7 @@ updateQueueButtons();
 updateRangeProgress(localVolume, 1, 1);
 castButton.addEventListener("click", () => {
   libraryPanel.hidden = true;
-  queuePanel.hidden = true;
+  setQueuePanelOpen(false);
   setLyricsPanelOpen(false);
   renderQueue();
   castPanel.hidden = !castPanel.hidden;
@@ -306,27 +313,28 @@ playlistPickerCreate.addEventListener("click", () => openPlaylistDialog(true));
 playlistCancel.addEventListener("click", closePlaylistDialog);
 playlistForm.addEventListener("submit", (event) => void createPlaylist(event));
 queuePanelButton.addEventListener("click", () => {
+  const open = queuePanel.hidden;
   castPanel.hidden = true;
   libraryPanel.hidden = true;
   setLyricsPanelOpen(false);
-  queuePanel.hidden = !queuePanel.hidden;
-  if (!queuePanel.hidden) renderQueue();
+  setQueuePanelOpen(open);
 });
-queueClose.addEventListener("click", () => {
-  queuePanel.hidden = true;
-  renderQueue();
-});
+queueClose.addEventListener("click", () => setQueuePanelOpen(false));
 queueClear.addEventListener("click", clearUpcomingQueue);
 lyricsButton.addEventListener("click", () => void handleLyricsButton());
 
 async function handleLyricsButton(): Promise<void> {
   if (lyricsButton.disabled || !selectedTrack) return;
-  if (!currentLyrics) await loadLyrics(selectedTrack);
-  if (!currentLyrics) return;
+  if (!lyricsPanel.hidden) {
+    setLyricsPanelOpen(false);
+    return;
+  }
+  if (lyricsViewState === "idle" || lyricsViewState === "error") await loadLyrics(selectedTrack);
+  if (lyricsViewState === "idle" || lyricsViewState === "loading" || lyricsViewState === "error") return;
   castPanel.hidden = true;
   libraryPanel.hidden = true;
-  queuePanel.hidden = true;
-  setLyricsPanelOpen(lyricsPanel.hidden);
+  setQueuePanelOpen(false);
+  setLyricsPanelOpen(true);
 }
 lyricsClose.addEventListener("click", () => setLyricsPanelOpen(false));
 playlistEditCancel.addEventListener("click", closePlaylistEditDialog);
@@ -343,6 +351,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     hideContextMenu();
     setLyricsPanelOpen(false);
+    setQueuePanelOpen(false);
   }
   handleKeyboardShortcut(event);
 });
@@ -350,9 +359,7 @@ window.addEventListener("resize", () => {
   positionActiveTabIndicator();
   scheduleNowArtistMarquee();
 });
-window.addEventListener("scroll", () => {
-  viewScrollPositions[getCurrentView()] = window.scrollY;
-}, { passive: true });
+window.addEventListener("scroll", handleWindowScroll, { passive: true });
 window.addEventListener("beforeunload", () => {
   savePlaybackSession();
   searchWorker?.terminate();
@@ -373,6 +380,7 @@ window.hires.onLibraryUpdated((result) => {
 
 chooseButton.addEventListener("click", () => {
   castPanel.hidden = true;
+  setQueuePanelOpen(false);
   setLyricsPanelOpen(false);
   libraryPanel.hidden = !libraryPanel.hidden;
 });
@@ -719,6 +727,7 @@ async function initializePlaylists(): Promise<void> {
 }
 
 function openPlaylistDialog(addCurrentTrack = false): void {
+  setQueuePanelOpen(false);
   addSelectedTrackAfterCreate = addCurrentTrack;
   playlistName.value = "";
   if (!playlistDialog.open) playlistDialog.showModal();
@@ -749,6 +758,7 @@ async function createPlaylist(event: SubmitEvent): Promise<void> {
 
 function openPlaylistPicker(track?: Track): void {
   if (!track) return;
+  setQueuePanelOpen(false);
   playlistPickerTrack = track;
   playlistPickerTitle.textContent = t("playlistAddTitle", { title: track.title });
   renderPlaylistOptions();
@@ -967,6 +977,7 @@ async function removePlaylistTrack(playlistId: string, trackId: string): Promise
 function openPlaylistEditDialog(playlistId: string): void {
   const playlist = playlists.find((item) => item.id === playlistId);
   if (!playlist) return;
+  setQueuePanelOpen(false);
   hideContextMenu();
   editingPlaylistId = playlist.id;
   editingPlaylistArtwork = playlist.artworkDataUrl;
@@ -1294,6 +1305,7 @@ async function clearDeletedCurrentTrack(): Promise<void> {
   selectedTrack = undefined;
   lyricsRequest += 1;
   currentLyrics = undefined;
+  lyricsViewState = "idle";
   activeLyricsLine = -1;
   setLyricsPanelOpen(false);
   lyricsButton.disabled = true;
@@ -1369,7 +1381,7 @@ function hideContextMenu(): void {
 
 async function enqueueTrack(track: Track): Promise<void> {
   manualQueue.push(track);
-  queuePanel.hidden = false;
+  setQueuePanelOpen(true);
   updateQueueButtons();
   if (!selectedTrack) await playNext();
 }
@@ -1382,6 +1394,7 @@ function renderQueue(): void {
   queueCount.textContent = String(manualQueue.length);
   queueCount.hidden = manualQueue.length === 0;
   queuePanelButton.classList.toggle("active", !queuePanel.hidden);
+  queuePanelButton.setAttribute("aria-expanded", String(!queuePanel.hidden));
   queueClear.disabled = manualQueue.length === 0;
 
   if (selectedTrack) {
@@ -1404,6 +1417,13 @@ function renderQueue(): void {
   } else if (upcomingCount === 0) {
     queueItems.append(createTextElement("p", "cast-empty", t("nothingAfterCurrent")));
   }
+}
+
+function setQueuePanelOpen(open: boolean): void {
+  queuePanel.hidden = !open;
+  queuePanelButton.classList.toggle("active", open);
+  queuePanelButton.setAttribute("aria-expanded", String(open));
+  if (open) renderQueue();
 }
 
 function createQueueItem(track: Track, source: "current" | PlaybackSource, index: number): HTMLElement {
@@ -1710,8 +1730,8 @@ function renderLocalTransport(): void {
 
 async function loadLyrics(track: Track): Promise<void> {
   const request = ++lyricsRequest;
-  const panelWasOpen = !lyricsPanel.hidden;
   currentLyrics = undefined;
+  lyricsViewState = "loading";
   activeLyricsLine = -1;
   lyricsButton.disabled = true;
   lyricsButton.title = t("searchingLyrics");
@@ -1724,31 +1744,42 @@ async function loadLyrics(track: Track): Promise<void> {
   try {
     const result = await window.hires.getLyrics(track);
     if (request !== lyricsRequest || selectedTrack?.id !== track.id) return;
-    if (!result) {
-      lyricsButton.title = t("noLyrics");
-      setLyricsPanelOpen(false);
-      lyricsLines.replaceChildren();
+    if (result.status === "instrumental") {
+      lyricsViewState = "instrumental";
+      lyricsButton.disabled = false;
+      lyricsButton.title = t("instrumentalLyrics");
+      renderLyricsMessage(t("instrumentalLyrics"));
       return;
     }
-    currentLyrics = result;
+    if (result.status === "missing") {
+      lyricsViewState = "missing";
+      lyricsButton.disabled = false;
+      lyricsButton.title = t("noLyrics");
+      renderMissingLyrics();
+      return;
+    }
+    currentLyrics = result.lyrics;
+    lyricsViewState = "found";
     lyricsButton.disabled = false;
     lyricsButton.title = t("lyricsAvailable");
-    lyricsTitle.textContent = result.trackName;
-    lyricsArtist.textContent = result.artistName;
+    lyricsTitle.textContent = result.lyrics.trackName;
+    lyricsArtist.textContent = result.lyrics.artistName;
     renderLyricsLines();
-    if (panelWasOpen) setLyricsPanelOpen(true);
   } catch (error) {
     if (request !== lyricsRequest || selectedTrack?.id !== track.id) return;
     console.warn("No se pudo consultar la letra sincronizada", error);
+    lyricsViewState = "error";
+    lyricsButton.disabled = false;
     lyricsButton.title = t("lyricsFailed");
     setLyricsPanelOpen(false);
-    lyricsLines.replaceChildren();
+    renderLyricsMessage(t("lyricsFailed"));
   }
 }
 
 function prepareLyricsForTrack(track: Track): void {
   lyricsRequest += 1;
   currentLyrics = undefined;
+  lyricsViewState = "idle";
   activeLyricsLine = -1;
   setLyricsPanelOpen(false);
   lyricsButton.disabled = false;
@@ -1756,6 +1787,35 @@ function prepareLyricsForTrack(track: Track): void {
   lyricsTitle.textContent = track.title;
   lyricsArtist.textContent = displayArtist(track.artist);
   lyricsLines.replaceChildren();
+}
+
+function renderLyricsMessage(message: string): void {
+  lyricsLines.replaceChildren(createTextElement("p", "lyrics-empty-message", message));
+  activeLyricsLine = -1;
+}
+
+function renderMissingLyrics(): void {
+  const emptyState = document.createElement("div");
+  emptyState.className = "lyrics-empty-state";
+  const message = createTextElement("p", "lyrics-empty-message", t("noLyrics"));
+  const help = createTextElement("p", "lyrics-contribution-help", t("lyricsContributionHelp"));
+  const contribute = document.createElement("button");
+  contribute.type = "button";
+  contribute.className = "lyrics-contribute";
+  contribute.textContent = t("contributeLyrics");
+  contribute.addEventListener("click", async () => {
+    contribute.disabled = true;
+    try {
+      await window.hires.openLyricsContribution();
+    } catch (error) {
+      console.warn("No se pudo abrir LRCGET", error);
+    } finally {
+      contribute.disabled = false;
+    }
+  });
+  emptyState.append(message, help, contribute);
+  lyricsLines.replaceChildren(emptyState);
+  activeLyricsLine = -1;
 }
 
 function renderLyricsLines(): void {
@@ -1766,13 +1826,34 @@ function renderLyricsLines(): void {
   }
   const fragment = document.createDocumentFragment();
   lyrics.lines.forEach((line, index) => {
-    const element = createTextElement("p", "lyrics-line", line.text);
+    const element = document.createElement("button");
+    element.type = "button";
+    element.className = "lyrics-line";
+    element.textContent = line.text;
     element.dataset.index = String(index);
+    element.title = t("seekToLyricsTime", { time: formatDuration(line.startTime) });
+    element.setAttribute("aria-label", t("seekToLyricsTime", { time: formatDuration(line.startTime) }));
+    element.addEventListener("click", () => void seekToLyricsTime(line.startTime));
     fragment.append(element);
   });
   lyricsLines.replaceChildren(fragment);
   activeLyricsLine = -1;
   updateLyricsSync(getPlaybackTime());
+}
+
+async function seekToLyricsTime(seconds: number): Promise<void> {
+  if (currentCastState.connected) {
+    try {
+      currentCastState = await window.hires.castSeek(seconds);
+      renderCastState();
+    } catch (error) {
+      showCastError(error);
+    }
+    return;
+  }
+  if (!selectedTrack) return;
+  player.currentTime = seconds;
+  renderLocalTransport();
 }
 
 function updateLyricsSync(currentTime: number): void {
@@ -1803,7 +1884,11 @@ function updateLyricsSync(currentTime: number): void {
 }
 
 function setLyricsPanelOpen(open: boolean): void {
-  const visible = open && Boolean(currentLyrics) && !lyricsButton.disabled;
+  const visible = open
+    && !lyricsButton.disabled
+    && lyricsViewState !== "idle"
+    && lyricsViewState !== "loading"
+    && lyricsViewState !== "error";
   lyricsPanel.hidden = !visible;
   lyricsButton.classList.toggle("active", visible);
   lyricsButton.setAttribute("aria-expanded", String(visible));
@@ -1812,6 +1897,45 @@ function setLyricsPanelOpen(open: boolean): void {
     const active = lyricsLines.querySelector<HTMLElement>(".lyrics-line.active");
     requestAnimationFrame(() => active?.scrollIntoView({ behavior: "smooth", block: "center" }));
   }
+}
+
+function handleWindowScroll(): void {
+  viewScrollPositions[getCurrentView()] = window.scrollY;
+  if (toolbarScrollFrame !== undefined) return;
+  toolbarScrollFrame = requestAnimationFrame(() => {
+    toolbarScrollFrame = undefined;
+    const nextY = Math.max(0, window.scrollY);
+    const delta = nextY - toolbarScrollY;
+    toolbarScrollY = nextY;
+    if (performance.now() < toolbarRevealLockUntil) {
+      showLibraryToolbar();
+      toolbarScrollDistance = 0;
+      return;
+    }
+    if (nextY <= 12) {
+      showLibraryToolbar();
+      toolbarScrollDistance = 0;
+      return;
+    }
+    if (Math.abs(delta) < 1) return;
+    const direction = delta > 0 ? 1 : -1;
+    if (direction !== toolbarScrollDirection) {
+      toolbarScrollDirection = direction;
+      toolbarScrollDistance = 0;
+    }
+    toolbarScrollDistance += Math.abs(delta);
+    if (direction > 0 && toolbarScrollDistance >= 34 && nextY > libraryToolbar.offsetHeight) {
+      libraryToolbar.classList.add("scroll-hidden");
+      toolbarScrollDistance = 0;
+    } else if (direction < 0 && toolbarScrollDistance >= 18) {
+      showLibraryToolbar();
+      toolbarScrollDistance = 0;
+    }
+  });
+}
+
+function showLibraryToolbar(): void {
+  libraryToolbar.classList.remove("scroll-hidden");
 }
 
 function getPlaybackTime(): number {
@@ -1866,6 +1990,9 @@ function groupArtists(tracks: Track[]): Artist[] {
 
 function setActiveTab(tab: LibraryView): void {
   const changed = getCurrentView() !== tab;
+  showLibraryToolbar();
+  toolbarScrollDistance = 0;
+  if (changed) toolbarRevealLockUntil = performance.now() + 300;
   tracksTab.classList.toggle("active", tab === "tracks");
   albumsTab.classList.toggle("active", tab === "albums");
   artistsTab.classList.toggle("active", tab === "artists");
@@ -2325,6 +2452,9 @@ function changeLanguage(language: AppLanguage): void {
   renderPlaylistOptions();
   renderCastState();
   renderQueue();
+  if (lyricsViewState === "instrumental") renderLyricsMessage(t("instrumentalLyrics"));
+  else if (lyricsViewState === "missing") renderMissingLyrics();
+  else if (lyricsViewState === "error") renderLyricsMessage(t("lyricsFailed"));
   renderShuffleAndRepeatLabels();
   renderPlaybackQuality();
   if (!castPanel.hidden) void refreshCastDevices();

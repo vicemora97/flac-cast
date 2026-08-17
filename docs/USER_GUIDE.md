@@ -107,7 +107,7 @@ See [Google Cast pipeline](CASTING.md) for detailed compatibility behavior.
 
 ## Synced lyrics
 
-Press **Lyrics** to request timestamped lyrics from LRCLIB. The lookup is not sent automatically when a track starts. If a synchronized match exists, the panel opens and the active line follows local or Cast playback time. If no match exists, the control remains unavailable for that track until it is selected again.
+Press **Lyrics** to request timestamped lyrics from LRCLIB. The lookup is not sent automatically when a track starts. If a synchronized match exists, the active line follows local or Cast playback time; click any line to jump local or Cast playback to its timestamp. A track consistently marked as instrumental displays an instrumental message. If LRCLIB contains conflicting records, Flac Cast prefers a closely matching synchronized result and does not treat a track as instrumental when another closely matching record contains vocal lyrics. If no synchronized match exists, the panel offers **Contribute lyrics**, which opens the official LRCGET client download page so the user can edit and publish lyrics separately. Flac Cast does not send track metadata to that page.
 
 The lookup sends title, artist, album, and rounded duration to LRCLIB. See [PRIVACY.md](../PRIVACY.md) for details.
 

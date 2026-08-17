@@ -54,6 +54,11 @@ export type SyncedLyrics = {
   lines: LyricsLine[];
 };
 
+export type LyricsLookupResult =
+  | { status: "found"; lyrics: SyncedLyrics }
+  | { status: "instrumental" }
+  | { status: "missing" };
+
 export type MediaAccess = {
   timestamp: number;
   clientAddress?: string;
@@ -95,6 +100,7 @@ export type HiresApi = {
   getAppVersion(): Promise<string>;
   openRepository(): Promise<boolean>;
   openProjectPage(page: "license" | "privacy" | "code-signing"): Promise<boolean>;
+  openLyricsContribution(): Promise<boolean>;
   setLanguage(language: "en" | "es"): Promise<"en" | "es">;
   setUiScale(scale: number): Promise<number>;
   loadSavedLibrary(): Promise<LibraryResult>;
@@ -115,7 +121,7 @@ export type HiresApi = {
   prewarmCastTracks(tracks: CastTrack[]): Promise<number>;
   disconnectCast(): Promise<CastState>;
   getMediaAccess(): Promise<MediaAccess | undefined>;
-  getLyrics(track: LyricsTrack): Promise<SyncedLyrics | undefined>;
+  getLyrics(track: LyricsTrack): Promise<LyricsLookupResult>;
   setTaskbarPlaybackState(state: TaskbarPlaybackState): void;
   onTaskbarPlaybackCommand(listener: (command: PlaybackCommand) => void): () => void;
   getPlaylists(): Promise<Playlist[]>;

@@ -135,6 +135,10 @@ async function createWindow(): Promise<void> {
       const trackContextMenu = !document.querySelector('#context-menu')?.hidden && document.querySelector('#context-menu')?.textContent?.includes('Add to queue');
       document.querySelector('#queue-panel-button')?.click();
       const queuePanelVisible = !document.querySelector('#queue-panel')?.hidden;
+      document.querySelector('#queue-panel-button')?.click();
+      const queuePanelStateSynced = Boolean(document.querySelector('#queue-panel')?.hidden)
+        && !document.querySelector('#queue-panel-button')?.classList.contains('active')
+        && document.querySelector('#queue-panel-button')?.getAttribute('aria-expanded') === 'false';
       const languageSelect = document.querySelector('#language');
       const initialLanguage = document.documentElement.lang;
       languageSelect.value = 'es';
@@ -163,8 +167,10 @@ async function createWindow(): Promise<void> {
         trackMenuButtons: document.querySelectorAll('.track-row .more-button').length,
         trackContextMenu,
         queuePanelVisible,
+        queuePanelStateSynced,
         lyricsButton: Boolean(document.querySelector('#lyrics-button')),
         lyricsPanel: Boolean(document.querySelector('#lyrics-panel')),
+        smartLibraryToolbar: Boolean(document.querySelector('.library-toolbar')),
         playlistEditDialog: Boolean(document.querySelector('#playlist-edit-dialog')),
         searchResults,
         activityIndicator: Boolean(document.querySelector('#library-activity')),
@@ -232,6 +238,11 @@ ipcMain.handle("app:open-project-page", async (_event, page: "license" | "privac
   const url = projectPages[page];
   if (!url) throw new Error("Unknown project page");
   await shell.openExternal(url);
+  return true;
+});
+
+ipcMain.handle("lyrics:open-contribution", async (): Promise<boolean> => {
+  await shell.openExternal("https://github.com/tranxuanthang/lrcget#download");
   return true;
 });
 

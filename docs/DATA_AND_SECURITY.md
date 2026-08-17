@@ -4,7 +4,7 @@
 
 Flac Cast reads music only from folders explicitly selected by the user. It does not crawl unrelated drives, upload audio, create an account, or send playback analytics.
 
-Internet access is used only after the user presses **Lyrics** for an uncached synchronized-lyrics lookup through LRCLIB or opens an external project page from **About**. Google Cast discovery and media transfer occur on the local network after the user opens or uses Cast controls. See the complete [privacy policy](../PRIVACY.md).
+Internet access is used only after the user presses **Lyrics** for an uncached synchronized-lyrics lookup through LRCLIB, opens the official LRCGET contribution page after a missing match, or opens an external project page from **About**. Google Cast discovery and media transfer occur on the local network after the user opens or uses Cast controls. See the complete [privacy policy](../PRIVACY.md).
 
 ## Persistent data
 
@@ -37,7 +37,7 @@ Contains deduplicated artwork blobs keyed by content hash. Identical artwork is 
 
 ### Lyrics cache
 
-LRCLIB results and negative lookups may be cached to avoid repeated network requests. This data contains track lookup information and synchronized lyric text, not audio. Flac Cast does not query LRCLIB automatically when a track starts; the lookup is initiated by pressing **Lyrics**.
+LRCLIB results, instrumental markers, and negative lookups may be cached to avoid repeated network requests. This data contains track lookup information and synchronized lyric text, not audio. Flac Cast does not query LRCLIB automatically when a track starts; the lookup is initiated by pressing **Lyrics**. If the user chooses **Contribute lyrics** after a missing match, the app opens the official LRCGET download page without adding track metadata to the URL.
 
 ### Renderer local storage
 

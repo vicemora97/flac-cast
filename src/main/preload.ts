@@ -5,6 +5,7 @@ const api: HiresApi = {
   getAppVersion: () => ipcRenderer.invoke("app:version"),
   openRepository: () => ipcRenderer.invoke("app:open-repository"),
   openProjectPage: (page) => ipcRenderer.invoke("app:open-project-page", page),
+  openLyricsContribution: () => ipcRenderer.invoke("lyrics:open-contribution"),
   setLanguage: (language) => ipcRenderer.invoke("app:set-language", language),
   setUiScale: (scale) => ipcRenderer.invoke("ui:set-scale", scale),
   loadSavedLibrary: () => ipcRenderer.invoke("library:saved"),

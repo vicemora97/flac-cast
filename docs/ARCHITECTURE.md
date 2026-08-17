@@ -98,7 +98,7 @@ Local playback receives a `127.0.0.1` URL. Cast receives a LAN IPv4 URL. The sou
 
 ### LyricsService
 
-`LyricsService` queries LRCLIB only after the user presses **Lyrics**, parses timestamped lines, respects temporary rate limits, and keeps a local result cache. The renderer resets lyric state on track changes without making a network request. The lyrics button becomes unavailable for the current track when no synchronized match exists.
+`LyricsService` queries LRCLIB only after the user presses **Lyrics**, parses timestamped lines, respects temporary rate limits, and keeps a local result cache. It first tries LRCLIB's exact metadata endpoint, then scores search candidates by normalized title, artist, album, and duration when the exact record has no synchronized text. A synchronized candidate is preferred over incomplete or contradictory instrumental records. Cached lookup results distinguish synchronized lyrics, tracks explicitly marked as instrumental, and missing matches. The renderer resets lyric state on track changes without making a network request. Missing matches expose a user-initiated link to the official LRCGET client; Flac Cast does not publish lyrics itself or pass track metadata to the external page.
 
 ## Startup sequence
 

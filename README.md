@@ -16,7 +16,7 @@ The application does not upload music to a cloud service. Local playback uses a 
 - Artist, title, and audio-quality sorting.
 - Local playback with previous, next, shuffle, album repeat, and track repeat.
 - A FIFO manually-added queue layered above the scheduled playback queue.
-- Synced lyrics through LRCLIB when a match exists.
+- Synced lyrics through LRCLIB, with instrumental-track detection and an official LRCGET contribution path when a match is missing.
 - English default interface and an English/Spanish language selector.
 - Google Cast discovery, playback, seeking, pause/resume, and synchronized volume.
 - Direct FLAC delivery with lossless FLAC repacking and WAV PCM fallback.

@@ -29,6 +29,8 @@ When the user presses **Lyrics** for a track that is not already cached, Flac Ca
 
 LRCLIB is an independent service. Its operator can receive normal connection information such as the user's IP address and controls its own server logs and retention. Review the [LRCLIB API documentation](https://lrclib.net/docs) and [LRCLIB source repository](https://github.com/tranxuanthang/lrclib) before using this feature. Flac Cast does not control LRCLIB's practices.
 
+If no synchronized lyrics are found, the lyrics panel offers a **Contribute lyrics** button. It opens the official [LRCGET](https://github.com/tranxuanthang/lrcget) download page in the operating system's browser. Flac Cast does not pass track metadata, local paths, audio, or lyrics to that page; any later contribution is made separately by the user through LRCGET and is subject to that project's and LRCLIB's terms and privacy practices.
+
 ### Google Cast
 
 When the user opens or uses Cast controls, Flac Cast discovers compatible receivers on the local network and receives device names, models, and addresses. After the user selects a receiver, the receiver downloads the selected audio and artwork directly from a temporary tokenized HTTP endpoint on the computer. Track title, artist, album, and artwork may be displayed by the receiver and by remote controls connected to it.

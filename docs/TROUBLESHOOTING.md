@@ -84,13 +84,13 @@ Ensure the current development build is running and fully restart from the tray.
 ## Lyrics are unavailable
 
 - Press **Lyrics** to start the lookup; playback does not query LRCLIB automatically.
-- A synchronized LRCLIB match must exist.
+- A synchronized LRCLIB match must exist to show timed lines. Instrumental tracks display a dedicated message; missing matches offer a link to the official LRCGET contribution client.
 - Track title, artist, album, and approximate duration influence matching.
 - Internet access is required for uncached lookups.
 - LRCLIB may temporarily rate-limit requests.
 - Instrumental tracks or uncommon metadata often have no result.
 
-The Lyrics button remains disabled when no synchronized lyrics exist.
+If LRCLIB returns no match, reopen **Lyrics** to view the contribution option. The external LRCGET page does not receive track metadata from Flac Cast.
 
 ## File deletion fails on a NAS
 
