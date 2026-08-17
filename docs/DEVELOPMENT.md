@@ -10,7 +10,7 @@
 - `bonjour-service`
 - `castv2-client`
 - `ffmpeg-static`
-- Squirrel.Windows packaging and macOS DMG packaging
+- Squirrel.Windows packaging, macOS DMG packaging, and Linux AppImage packaging
 
 ## Repository layout
 
@@ -76,7 +76,18 @@ npm run package:mac
 npm run make:mac
 ```
 
-The DMG is not Developer ID signed or notarized. Linux packaging remains pending and must be validated natively before it is added to release instructions. See [Release guide](RELEASE.md) for the complete checklist.
+The DMG is not Developer ID signed or notarized.
+
+On Linux x64, create the application bundle or AppImage with:
+
+```bash
+npm run package:linux
+npm run make:linux
+```
+
+`make:linux` downloads `appimagetool` from its upstream GitHub release the first time (verifying it against the SHA-256 digest GitHub publishes for that asset) and caches it under `out/tools`. The AppImage runs Electron with `--no-sandbox`, since the packaged Chromium sandbox helper cannot carry a setuid bit inside an AppImage.
+
+See [Release guide](RELEASE.md) for the complete checklist.
 
 ## Source responsibilities
 

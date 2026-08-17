@@ -23,7 +23,9 @@
     "package:win": "npm run build && npm run generate:icon && node scripts/package-windows.mjs",
     "make:win": "npm run build && npm run generate:icon && node scripts/make-windows.mjs",
     "package:mac": "npm run build && npm run generate:icon && node scripts/package-mac.mjs",
-    "make:mac": "npm run build && npm run generate:icon && node scripts/make-mac.mjs"
+    "make:mac": "npm run build && npm run generate:icon && node scripts/make-mac.mjs",
+    "package:linux": "npm run build && npm run generate:icon && node scripts/package-linux.mjs",
+    "make:linux": "npm run build && npm run generate:icon && node scripts/make-linux.mjs"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",

@@ -25,7 +25,7 @@ The application does not upload music to a cloud service. Local playback uses a 
 
 ## Requirements
 
-- Windows 10 or Windows 11, x64; or macOS 12 or later on Apple silicon for the current macOS package.
+- Windows 10 or Windows 11, x64; macOS 12 or later on Apple silicon for the current macOS package; or a modern x64 Linux desktop for the AppImage.
 - Node.js and npm for development.
 - A local or network-accessible FLAC library.
 - Computer and Cast receiver on the same LAN for casting.
@@ -49,6 +49,8 @@ npm run package:win   # Windows only
 npm run make:win      # Windows only
 npm run package:mac   # macOS only
 npm run make:mac      # macOS only
+npm run package:linux # Linux only
+npm run make:linux    # Linux only
 ```
 
 Release artifacts are created under:
@@ -56,17 +58,16 @@ Release artifacts are created under:
 ```text
 out/make/squirrel.windows/x64/Flac-Cast-Windows-x64-Setup.exe
 out/make/dmg/Flac-Cast-macOS-arm64.dmg
+out/make/appimage/Flac-Cast-Linux-x86_64.AppImage
 ```
 
-The current Windows installer is unsigned, and the macOS build is not Developer ID signed or notarized. Smart App Control, SmartScreen, or Gatekeeper may block these artifacts. Development can continue from a source checkout; public distribution should use trusted platform signing.
-
-Linux source compatibility is being prepared, but no Linux artifact should be advertised until the pending native package is merged and validated.
+The current Windows installer is unsigned, and the macOS build is not Developer ID signed or notarized. Smart App Control, SmartScreen, or Gatekeeper may block these artifacts. Development can continue from a source checkout; public distribution should use trusted platform signing. The Linux AppImage is likewise unsigned and runs with `--no-sandbox`, since Electron's setuid sandbox helper cannot work once packaged inside an AppImage.
 
 ## Data location
 
 For compatibility with early builds, application state remains under:
 
-On Windows this is `%APPDATA%\Hires Local`; on macOS it is `~/Library/Application Support/Hires Local`.
+On Windows this is `%APPDATA%\Hires Local`; on macOS it is `~/Library/Application Support/Hires Local`; on Linux it is `~/.config/Hires Local`.
 
 This directory contains settings, the library index, deduplicated artwork, and the lyrics cache. Temporary Cast conversions use the operating-system temporary directory.
 

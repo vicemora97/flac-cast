@@ -47,9 +47,21 @@ Expected files:
 
 The current macOS build targets `arm64`. Do not build it on an Intel dependency installation because the bundled `ffmpeg-static` binary follows the host platform and architecture.
 
-### Linux
+### Linux x64
 
-Linux packaging is not present on `main` yet. Add and validate the pending Linux build before advertising a Linux download. Do not use the current stale `linux-dev` branch as a release source without rebasing and reviewing it.
+```bash
+npm ci
+npm run make:linux
+```
+
+Expected files:
+
+- `out/make/appimage/Flac-Cast-Linux-x86_64.AppImage`
+- `out/make/appimage/Flac-Cast-Linux-x86_64.AppImage.sha256`
+
+The AppImage bundles Electron's Chromium sandbox helper without the setuid bit that AppImages cannot rely on after mounting, so `AppRun` launches the app with `--no-sandbox`. Building requires outbound network access once, to fetch `appimagetool` from its upstream GitHub release; the script verifies the download against the SHA-256 digest GitHub publishes for that asset before running it, and caches the verified binary under `out/tools`.
+
+The remote `linux-dev` branch predates macOS packaging entirely and contains no Linux packaging work despite its name; it must not be used as a release source.
 
 ## Signing status
 
