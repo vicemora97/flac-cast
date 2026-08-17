@@ -11,6 +11,16 @@ const run = promisify(execFile);
 const appName = "Flac Cast";
 const appId = "flac-cast";
 const architecture = "x86_64";
+const appimagetool = {
+  name: `appimagetool-${architecture}.AppImage`,
+  url: `https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${architecture}.AppImage`,
+  digest: "sha256:ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+};
+const appImageRuntime = {
+  name: `runtime-${architecture}`,
+  url: `https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-${architecture}`,
+  digest: "sha256:2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+};
 
 const [appOutputDirectory] = await packageLinux();
 if (!appOutputDirectory) throw new Error("Electron Packager no devolvió la carpeta de la aplicación");
@@ -50,9 +60,10 @@ await writeFile(
   "utf8"
 );
 
-const appimagetoolPath = await ensureAppimagetool();
+const appimagetoolPath = await ensureVerifiedTool(appimagetool, true);
+const runtimePath = await ensureVerifiedTool(appImageRuntime, false);
 
-await run(appimagetoolPath, [appDir, appImagePath], {
+await run(appimagetoolPath, ["--runtime-file", runtimePath, appDir, appImagePath], {
   env: { ...process.env, ARCH: architecture, APPIMAGE_EXTRACT_AND_RUN: "1" }
 });
 await chmod(appImagePath, 0o755);
@@ -60,37 +71,31 @@ await chmod(appImagePath, 0o755);
 const checksumPath = await writeSha256(appImagePath);
 console.log(`Instalador generado en:\n${appImagePath}\nSHA-256 generado en:\n${checksumPath}`);
 
-async function ensureAppimagetool() {
+async function ensureVerifiedTool(tool, executable) {
   const toolsDirectory = join(projectRoot, "out", "tools");
-  const toolPath = join(toolsDirectory, `appimagetool-${architecture}.AppImage`);
-  const digestPath = `${toolPath}.digest`;
+  const toolPath = join(toolsDirectory, tool.name);
   await mkdir(toolsDirectory, { recursive: true });
 
-  const response = await fetch("https://api.github.com/repos/AppImage/appimagetool/releases/latest");
-  if (!response.ok) throw new Error(`No se pudo consultar la versión de appimagetool: ${response.status}`);
-  const release = await response.json();
-  const asset = release.assets.find((candidate) => candidate.name === `appimagetool-${architecture}.AppImage`);
-  if (!asset?.digest) throw new Error("La release de appimagetool no incluye el binario o su digest esperado");
-  const expectedDigest = asset.digest;
-
   try {
-    const cachedDigest = await readFile(digestPath, "utf8");
-    if (cachedDigest.trim() === expectedDigest) return toolPath;
+    const cachedBytes = await readFile(toolPath);
+    if (digest(cachedBytes) === tool.digest) return toolPath;
   } catch {
-    // Aún no hay una copia en caché.
+    // The tool has not been cached yet.
   }
 
-  const download = await fetch(asset.browser_download_url);
-  if (!download.ok) throw new Error(`No se pudo descargar appimagetool: ${download.status}`);
+  const download = await fetch(tool.url);
+  if (!download.ok) throw new Error(`Could not download ${tool.name}: HTTP ${download.status}`);
   const bytes = Buffer.from(await download.arrayBuffer());
-
-  const actualDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-  if (actualDigest !== expectedDigest) {
-    throw new Error(`El hash de appimagetool no coincide con el publicado por GitHub (${actualDigest} != ${expectedDigest})`);
+  const actualDigest = digest(bytes);
+  if (actualDigest !== tool.digest) {
+    throw new Error(`${tool.name} failed SHA-256 verification (${actualDigest} != ${tool.digest})`);
   }
 
   await writeFile(toolPath, bytes);
-  await chmod(toolPath, 0o755);
-  await writeFile(digestPath, expectedDigest, "utf8");
+  if (executable) await chmod(toolPath, 0o755);
   return toolPath;
+}
+
+function digest(bytes) {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }

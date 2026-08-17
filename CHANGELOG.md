@@ -2,6 +2,20 @@
 
 All notable changes to Flac Cast are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Licensed the project under GNU GPL v3.0 or later and added privacy, security, contribution, governance, conduct, code-signing, and third-party policies.
+- Added dependency-license validation to CI and public GitHub issue/pull-request templates.
+- Added Linux x64 AppImage packaging and documented a unified Windows, macOS, and Linux release.
+
+### Changed
+
+- LRCLIB is queried only after an explicit Lyrics action instead of automatically on every track start.
+- The About view now exposes the license, privacy policy, and code signing policy.
+- Replaced remaining personal-name package metadata with project handles or contributor attribution.
+
 ## [1.0.1] - 2026-08-14
 
 ### Changed

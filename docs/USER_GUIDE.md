@@ -107,7 +107,9 @@ See [Google Cast pipeline](CASTING.md) for detailed compatibility behavior.
 
 ## Synced lyrics
 
-When a track starts, Flac Cast checks LRCLIB for timestamped lyrics. The Lyrics button is enabled only when synchronized lyrics are available. The active line follows local or Cast playback time.
+Press **Lyrics** to request timestamped lyrics from LRCLIB. The lookup is not sent automatically when a track starts. If a synchronized match exists, the panel opens and the active line follows local or Cast playback time. If no match exists, the control remains unavailable for that track until it is selected again.
+
+The lookup sends title, artist, album, and rounded duration to LRCLIB. See [PRIVACY.md](../PRIVACY.md) for details.
 
 Lyrics lookup requires Internet access; music playback and casting do not.
 

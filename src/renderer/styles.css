@@ -189,6 +189,9 @@ audio { display: none; }
 .about-link { padding: 10px 14px; border: 1px solid var(--accent); border-radius: 10px; color: #11150d; background: var(--accent); font-weight: 750; cursor: pointer; }
 .about-link:hover:not(:disabled) { filter: brightness(1.06); }
 .about-link:disabled { opacity: .55; cursor: wait; }
+.about-legal { grid-column: 1 / -1; }
+.about-link-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.about-link-secondary { color: var(--accent); background: transparent; }
 .playlist-detail-actions { display: flex; gap: 9px; margin-top: 16px; }
 .danger-button { padding: 8px 12px; border: 1px solid #573733; border-radius: 9px; color: #ffaaa0; background: #2a201e; cursor: pointer; }
 .secondary-button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; color: inherit; background: #252925; cursor: pointer; }

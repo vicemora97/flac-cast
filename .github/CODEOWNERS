@@ -1,0 +1,9 @@
+# Default review owner for all project changes.
+* @vicemora97
+
+# Signing and build-chain changes require explicit maintainer review.
+/.github/ @vicemora97
+/.signpath/ @vicemora97
+/scripts/ @vicemora97
+/package.json @vicemora97
+/package-lock.json @vicemora97

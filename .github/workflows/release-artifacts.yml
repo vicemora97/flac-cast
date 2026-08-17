@@ -1,0 +1,75 @@
+name: Native release artifacts
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-artifacts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows x64
+            os: windows-latest
+            command: make:win
+            artifact: Flac-Cast-Windows-x64
+            path: |
+              out/make/squirrel.windows/x64/Flac-Cast-Windows-x64-Setup.exe
+              out/make/squirrel.windows/x64/Flac-Cast-Windows-x64-Setup.exe.sha256
+          - label: macOS arm64
+            os: macos-14
+            command: make:mac
+            artifact: Flac-Cast-macOS-arm64
+            path: |
+              out/make/dmg/Flac-Cast-macOS-arm64.dmg
+              out/make/dmg/Flac-Cast-macOS-arm64.dmg.sha256
+          - label: Linux x64
+            os: ubuntu-latest
+            command: make:linux
+            artifact: Flac-Cast-Linux-x86_64
+            path: |
+              out/make/appimage/Flac-Cast-Linux-x86_64.AppImage
+              out/make/appimage/Flac-Cast-Linux-x86_64.AppImage.sha256
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Validate dependency licenses
+        run: npm run licenses:check
+
+      - name: Type-check
+        run: npm run check
+
+      - name: Build native artifact
+        run: npm run ${{ matrix.command }}
+
+      - name: Upload unsigned artifact
+        id: upload-unsigned-artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
+          retention-days: 30

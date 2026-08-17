@@ -21,8 +21,8 @@ export function packageWindows() {
       /^\/(?:README\.md|tsconfig\.json)$/
     ],
     win32metadata: {
-      CompanyName: "Flac Cast",
-      FileDescription: "Reproductor local FLAC Hi-Res",
+      CompanyName: "Flac Cast contributors",
+      FileDescription: "Local hi-res FLAC player with Google Cast support",
       ProductName: "Flac Cast"
     }
   });

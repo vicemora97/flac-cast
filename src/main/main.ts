@@ -223,6 +223,18 @@ ipcMain.handle("app:open-repository", async (): Promise<boolean> => {
   return true;
 });
 
+ipcMain.handle("app:open-project-page", async (_event, page: "license" | "privacy" | "code-signing"): Promise<boolean> => {
+  const projectPages = {
+    license: "https://github.com/vicemora97/flac-cast/blob/main/LICENSE",
+    privacy: "https://github.com/vicemora97/flac-cast/blob/main/PRIVACY.md",
+    "code-signing": "https://github.com/vicemora97/flac-cast/blob/main/docs/CODE_SIGNING_POLICY.md"
+  } as const;
+  const url = projectPages[page];
+  if (!url) throw new Error("Unknown project page");
+  await shell.openExternal(url);
+  return true;
+});
+
 ipcMain.handle("app:set-language", (_event, language: "en" | "es"): "en" | "es" => {
   appLanguage = language === "es" ? "es" : "en";
   for (const window of BrowserWindow.getAllWindows()) {

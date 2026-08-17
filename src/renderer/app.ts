@@ -317,13 +317,17 @@ queueClose.addEventListener("click", () => {
   renderQueue();
 });
 queueClear.addEventListener("click", clearUpcomingQueue);
-lyricsButton.addEventListener("click", () => {
-  if (!currentLyrics || lyricsButton.disabled) return;
+lyricsButton.addEventListener("click", () => void handleLyricsButton());
+
+async function handleLyricsButton(): Promise<void> {
+  if (lyricsButton.disabled || !selectedTrack) return;
+  if (!currentLyrics) await loadLyrics(selectedTrack);
+  if (!currentLyrics) return;
   castPanel.hidden = true;
   libraryPanel.hidden = true;
   queuePanel.hidden = true;
   setLyricsPanelOpen(lyricsPanel.hidden);
-});
+}
 lyricsClose.addEventListener("click", () => setLyricsPanelOpen(false));
 playlistEditCancel.addEventListener("click", closePlaylistEditDialog);
 playlistEditForm.addEventListener("submit", (event) => void savePlaylistEdits(event));
@@ -866,10 +870,38 @@ function showAbout(): void {
   });
   project.append(repository);
 
+  const legal = document.createElement("section");
+  legal.className = "about-card about-legal";
+  legal.append(
+    createTextElement("h3", "", t("openSource")),
+    createTextElement("p", "about-copy", t("licenseSummary"))
+  );
+  const legalLinks = document.createElement("div");
+  legalLinks.className = "about-link-row";
+  legalLinks.append(
+    createProjectPageButton(t("viewLicense"), "license"),
+    createProjectPageButton(t("privacyPolicy"), "privacy"),
+    createProjectPageButton(t("codeSigningPolicy"), "code-signing")
+  );
+  legal.append(legalLinks);
+
   const grid = document.createElement("div");
   grid.className = "about-grid";
-  grid.append(credits, project);
+  grid.append(credits, project, legal);
   trackList.append(hero, grid);
+}
+
+function createProjectPageButton(label: string, page: "license" | "privacy" | "code-signing"): HTMLButtonElement {
+  const button = createTextElement("button", "about-link about-link-secondary", label) as HTMLButtonElement;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await window.hires.openProjectPage(page);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
 }
 
 function createAboutCredit(role: string, name: string): HTMLElement {
@@ -1426,7 +1458,7 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
       currentPlaybackSource = source;
     }
     selectedTrack = track;
-    void loadLyrics(track);
+    prepareLyricsForTrack(track);
     autoAdvancedTrackId = undefined;
     updateQueueButtons();
     nowTitle.textContent = track.title;
@@ -1712,6 +1744,18 @@ async function loadLyrics(track: Track): Promise<void> {
     setLyricsPanelOpen(false);
     lyricsLines.replaceChildren();
   }
+}
+
+function prepareLyricsForTrack(track: Track): void {
+  lyricsRequest += 1;
+  currentLyrics = undefined;
+  activeLyricsLine = -1;
+  setLyricsPanelOpen(false);
+  lyricsButton.disabled = false;
+  lyricsButton.title = t("searchLyrics");
+  lyricsTitle.textContent = track.title;
+  lyricsArtist.textContent = displayArtist(track.artist);
+  lyricsLines.replaceChildren();
 }
 
 function renderLyricsLines(): void {
@@ -2127,7 +2171,7 @@ function restorePlaybackSession(): void {
   const track = session.selectedTrackId ? byId.get(session.selectedTrackId) : undefined;
   if (track) {
     selectedTrack = track;
-    void loadLyrics(track);
+    prepareLyricsForTrack(track);
     player.src = track.localUrl;
     player.dataset.trackId = track.id;
     player.volume = Math.max(0, Math.min(1, session.volume ?? 1));

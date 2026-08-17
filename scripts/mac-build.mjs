@@ -20,7 +20,7 @@ export function packageMac() {
       /^\/(?:src|docs|scripts|out)(?:\/|$)/,
       /^\/(?:README\.md|tsconfig\.json)$/
     ],
-    appBundleId: "com.vicente.flaccast",
+    appBundleId: "io.github.vicemora97.flaccast",
     appCategoryType: "public.app-category.music"
   });
 }

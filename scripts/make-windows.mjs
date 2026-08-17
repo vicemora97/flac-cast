@@ -17,7 +17,7 @@ await installer.createWindowsInstaller({
   appDirectory,
   outputDirectory,
   authors: "Flac Cast contributors",
-  description: "Reproductor local FLAC Hi-Res con Google Cast",
+  description: "Local hi-res FLAC player with Google Cast support",
   exe: "Flac Cast.exe",
   name: "FlacCast",
   setupExe: setupFileName,

@@ -1,5 +1,8 @@
 # Flac Cast
 
+[![License: GPL v3 or later](https://img.shields.io/badge/License-GPL_v3_or_later-blue.svg)](LICENSE)
+[![CI](https://github.com/vicemora97/flac-cast/actions/workflows/ci.yml/badge.svg)](https://github.com/vicemora97/flac-cast/actions/workflows/ci.yml)
+
 Flac Cast is a desktop music player for local and network-hosted FLAC libraries. It plays music locally, browses metadata and artwork, manages playlists and queues, and streams lossless audio to Google Cast receivers over the local network.
 
 The application does not upload music to a cloud service. Local playback uses a loopback HTTP endpoint, while Cast receivers read an ephemeral LAN URL served directly by the PC.
@@ -80,8 +83,31 @@ This directory contains settings, the library index, deduplicated artwork, and t
 - [Development guide](docs/DEVELOPMENT.md)
 - [Release guide](docs/RELEASE.md)
 - [Data, cache, privacy, and security](docs/DATA_AND_SECURITY.md)
+- [Privacy policy](PRIVACY.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Project governance](GOVERNANCE.md)
+- [Code signing policy](docs/CODE_SIGNING_POLICY.md)
+- [Open-source release checklist](docs/OPEN_SOURCE_RELEASE.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
+- [Asset provenance](ASSETS.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Changelog](CHANGELOG.md)
+
+## License
+
+Copyright (C) 2026 Flac Cast contributors.
+
+Flac Cast is free software licensed under the [GNU General Public License version 3 or later](LICENSE). You may use, study, modify, and redistribute it under that license. Distributed builds are provided without warranty. Third-party components remain under their respective terms; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+The `"private": true` package-manifest field only prevents accidental publication to the npm registry. It does not make this GPL-licensed repository proprietary.
+
+## Code signing policy
+
+The current downloads are unsigned unless a release explicitly says otherwise. The project is preparing an application to SignPath Foundation and publishes the complete [code signing policy](docs/CODE_SIGNING_POLICY.md), including roles, release controls, and privacy links.
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
 ## Current audio limitations
 

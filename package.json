@@ -3,6 +3,7 @@
   "productName": "Flac Cast",
   "version": "1.0.1",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "description": "Local hi-res FLAC player with Google Cast support",
   "author": "@vicemora97 and Flac Cast contributors",
   "repository": {
@@ -19,6 +20,7 @@
     "dev": "npm run build && electron .",
     "start": "electron .",
     "check": "tsc --noEmit",
+    "licenses:check": "node scripts/check-licenses.mjs",
     "generate:icon": "node scripts/generate-icon.mjs",
     "package:win": "npm run build && npm run generate:icon && node scripts/package-windows.mjs",
     "make:win": "npm run build && npm run generate:icon && node scripts/make-windows.mjs",

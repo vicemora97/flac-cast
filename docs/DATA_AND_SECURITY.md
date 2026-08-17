@@ -4,7 +4,7 @@
 
 Flac Cast reads music only from folders explicitly selected by the user. It does not crawl unrelated drives, upload audio, create an account, or send playback analytics.
 
-Internet access is used only for optional synchronized-lyrics lookup through LRCLIB. Google Cast discovery and media transfer occur on the local network.
+Internet access is used only after the user presses **Lyrics** for an uncached synchronized-lyrics lookup through LRCLIB or opens an external project page from **About**. Google Cast discovery and media transfer occur on the local network after the user opens or uses Cast controls. See the complete [privacy policy](../PRIVACY.md).
 
 ## Persistent data
 
@@ -37,7 +37,7 @@ Contains deduplicated artwork blobs keyed by content hash. Identical artwork is 
 
 ### Lyrics cache
 
-LRCLIB results and negative lookups may be cached to avoid repeated network requests. This data contains track lookup information and synchronized lyric text, not audio.
+LRCLIB results and negative lookups may be cached to avoid repeated network requests. This data contains track lookup information and synchronized lyric text, not audio. Flac Cast does not query LRCLIB automatically when a track starts; the lookup is initiated by pressing **Lyrics**.
 
 ### Renderer local storage
 
@@ -120,4 +120,4 @@ Removing application data does not delete music files.
 
 ## Distribution security
 
-The current development installer is unsigned. Windows reputation systems can block or warn about it. Do not instruct users to weaken Smart App Control globally. For broader distribution, sign binaries and installers with a trusted Windows code-signing certificate and publish checksums for release artifacts.
+The current development installer is unsigned. Windows reputation systems can block or warn about it. Do not instruct users to weaken Smart App Control globally. For broader distribution, sign binaries and installers with a trusted Windows code-signing certificate and publish checksums for release artifacts. See the public [code signing policy](CODE_SIGNING_POLICY.md).

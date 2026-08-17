@@ -98,7 +98,7 @@ Local playback receives a `127.0.0.1` URL. Cast receives a LAN IPv4 URL. The sou
 
 ### LyricsService
 
-`LyricsService` queries LRCLIB for synchronized lyrics, parses timestamped lines, respects temporary rate limits, and keeps a local result cache. The lyrics button remains unavailable when no synchronized match exists.
+`LyricsService` queries LRCLIB only after the user presses **Lyrics**, parses timestamped lines, respects temporary rate limits, and keeps a local result cache. The renderer resets lyric state on track changes without making a network request. The lyrics button becomes unavailable for the current track when no synchronized match exists.
 
 ## Startup sequence
 
