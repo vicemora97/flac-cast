@@ -16,6 +16,8 @@ The application first displays its saved index and then verifies each folder in 
 
 The Libraries side panel lists every configured root. Removing a root removes it from Flac Cast and its metadata index; it does not delete music files.
 
+The refresh button in the library toolbar starts an immediate incremental scan of every configured folder. Use it when a NAS or file-system watcher has not reported a newly added, changed, or removed track yet. Unchanged files keep their cached metadata, so a manual refresh does not reread every FLAC file.
+
 Flac Cast scans recursively. It indexes `.flac` files and reads:
 
 - title, artist, and album;

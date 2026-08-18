@@ -47,6 +47,7 @@ const searchIndexStatus = document.querySelector<HTMLElement>("#search-index-sta
 const trackSortControl = document.querySelector<HTMLElement>("#track-sort-control")!;
 const trackSortSelect = document.querySelector<HTMLSelectElement>("#track-sort")!;
 const libraryActivity = document.querySelector<HTMLElement>("#library-activity")!;
+const refreshLibraryButton = document.querySelector<HTMLButtonElement>("#refresh-library")!;
 const trackList = document.querySelector<HTMLElement>("#tracks")!;
 const player = document.querySelector<HTMLAudioElement>("#player")!;
 const localPlayer = document.querySelector<HTMLElement>("#local-player")!;
@@ -130,6 +131,8 @@ let autoAdvancedTrackId: string | undefined;
 let trackChangeInProgress = false;
 let appliedUiScale = 0;
 let libraryOperation = 0;
+let libraryBusy = false;
+let manualLibraryRefreshInFlight = false;
 let addSelectedTrackAfterCreate = false;
 let playlistPickerTrack: Track | undefined;
 let editingPlaylistId: string | undefined;
@@ -367,7 +370,11 @@ window.addEventListener("beforeunload", () => {
   searchWorker?.terminate();
 });
 document.addEventListener("visibilitychange", handleVisibilityChange);
-window.hires.onLibraryActivity((active) => { libraryActivity.hidden = !active; });
+window.hires.onLibraryActivity((active) => {
+  libraryBusy = active;
+  libraryActivity.hidden = !active;
+  updateRefreshLibraryButton();
+});
 scheduleCastRefresh(0);
 void initializeLibrary();
 void initializePlaylists();
@@ -388,6 +395,7 @@ chooseButton.addEventListener("click", () => {
 });
 libraryClose.addEventListener("click", () => { libraryPanel.hidden = true; });
 addLibraryButton.addEventListener("click", () => void addLibrary());
+refreshLibraryButton.addEventListener("click", () => void refreshLibraryManually());
 
 async function addLibrary(): Promise<void> {
   const operation = ++libraryOperation;
@@ -405,6 +413,44 @@ async function addLibrary(): Promise<void> {
     addLibraryButton.disabled = false;
     if (label) label.textContent = t("addFolder");
   }
+}
+
+async function refreshLibraryManually(): Promise<void> {
+  if (manualLibraryRefreshInFlight || libraryFolders.length === 0) return;
+  const operation = ++libraryOperation;
+  manualLibraryRefreshInFlight = true;
+  updateRefreshLibraryButton();
+  countLabel.textContent = t("refreshingLibrary");
+  try {
+    const result = await window.hires.refreshLibrary();
+    if (operation !== libraryOperation) return;
+    const detailOpen = trackList.classList.contains("album-detail")
+      || trackList.classList.contains("artist-detail")
+      || trackList.classList.contains("playlist-detail");
+    if (detailOpen) updateLibraryState(result);
+    else applyLibraryResult(result, getCurrentView());
+    if (result.cacheUsed) {
+      const unavailable = result.unavailableFolders?.length ?? 0;
+      countLabel.textContent = `${formatTrackCount(result.tracks.length)} · ${formatOfflineFolderCount(unavailable)}`;
+      folderLabel.title = t("cachedIndex");
+    } else {
+      countLabel.textContent = `${formatTrackCount(result.tracks.length)} · ${t("updated")}`;
+    }
+  } catch (error) {
+    countLabel.textContent = libraryTracks.length > 0
+      ? `${formatTrackCount(libraryTracks.length)} · ${t("updateFailed")}`
+      : t("error");
+    folderLabel.title = t("refreshLibraryFailed", { error: formatErrorMessage(error) });
+  } finally {
+    manualLibraryRefreshInFlight = false;
+    updateRefreshLibraryButton();
+  }
+}
+
+function updateRefreshLibraryButton(): void {
+  const active = libraryBusy || manualLibraryRefreshInFlight;
+  refreshLibraryButton.disabled = active || libraryFolders.length === 0;
+  refreshLibraryButton.classList.toggle("refreshing", active);
 }
 
 async function initializeLibrary(): Promise<void> {
@@ -644,6 +690,7 @@ function updateLibraryState(result: LibraryResult): void {
   folderLabel.title = result.folders.join("\n");
   countLabel.textContent = formatTrackCount(result.tracks.length);
   renderLibraryFolders();
+  updateRefreshLibraryButton();
 }
 
 function renderLibraryFolders(): void {

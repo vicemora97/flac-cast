@@ -4,6 +4,12 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-18
+
+### Added
+
+- Added a manual library refresh button that immediately runs an incremental scan across every configured local or NAS folder.
+
 ## [1.0.2] - 2026-08-18
 
 ### Added
@@ -56,6 +62,7 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
+[1.0.3]: https://github.com/vicemora97/flac-cast/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/vicemora97/flac-cast/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/vicemora97/flac-cast/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/vicemora97/flac-cast/releases/tag/v1.0.0

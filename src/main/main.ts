@@ -176,6 +176,7 @@ async function createWindow(): Promise<void> {
         playlistEditDialog: Boolean(document.querySelector('#playlist-edit-dialog')),
         searchResults,
         activityIndicator: Boolean(document.querySelector('#library-activity')),
+        manualLibraryRefreshButton: Boolean(document.querySelector('#refresh-library')),
         customTransport: Boolean(document.querySelector('#local-player .timeline')),
         transportAligned: Math.max(...centers) - Math.min(...centers) < 1,
         tabIndicatorWidth: getComputedStyle(document.querySelector('.view-tabs')).getPropertyValue('--tab-pill-width'),
