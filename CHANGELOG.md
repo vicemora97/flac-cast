@@ -4,17 +4,25 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-18
+
 ### Added
 
 - Licensed the project under GNU GPL v3.0 or later and added privacy, security, contribution, governance, conduct, code-signing, and third-party policies.
 - Added dependency-license validation to CI and public GitHub issue/pull-request templates.
 - Added Linux x64 AppImage packaging and documented a unified Windows, macOS, and Linux release.
+- Added a green active-track state and an animated three-bar playback indicator to track lists.
 
 ### Changed
 
 - LRCLIB is queried only after an explicit Lyrics action instead of automatically on every track start.
 - The About view now exposes the license, privacy policy, and code signing policy.
 - Replaced remaining personal-name package metadata with project handles or contributor attribution.
+
+### Fixed
+
+- Refined the auto-hiding library toolbar and queue panel state.
+- Improved synchronized-lyrics matching, instrumental detection, and timestamp seeking.
 
 ## [1.0.1] - 2026-08-14
 
@@ -48,5 +56,6 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
+[1.0.2]: https://github.com/vicemora97/flac-cast/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/vicemora97/flac-cast/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/vicemora97/flac-cast/releases/tag/v1.0.0
