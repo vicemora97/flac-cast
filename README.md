@@ -19,7 +19,7 @@ The application does not upload music to a cloud service. Local playback uses a 
 - Synced lyrics through LRCLIB, with instrumental-track detection and an official LRCGET contribution path when a match is missing.
 - English default interface and an English/Spanish language selector.
 - Google Cast discovery, receiver queueing, playback, seeking, pause/resume, repeat, and synchronized volume.
-- Direct source-format delivery with lossless FLAC repacking and WAV PCM fallback.
+- Direct source-format delivery with lossless FLAC repacking, compatible FLAC, and universal WAV PCM fallbacks.
 - Disk prewarming for the next five Cast tracks.
 - Global media keys and a notification-area/menu-bar tray, plus Windows taskbar thumbnail controls.
 - Automatic library watching with a periodic NAS-safe consistency scan.
@@ -111,7 +111,7 @@ Free code signing provided by [SignPath.io](https://signpath.io/), certificate b
 
 ## Current audio limitations
 
-Local playback uses Chromium's normal operating-system audio path, so it is not currently exclusive-mode or guaranteed bit-perfect. On Windows, it does not use WASAPI exclusive mode. Cast prefers the original source format; FLAC can be sanitized without re-encoding, and WAV PCM is the final compatibility fallback. Lossy inputs remain lossy even when wrapped in WAV. Sample rates above 96 kHz are reduced to 96 kHz only for the WAV fallback.
+Local playback uses Chromium's normal operating-system audio path, so it is not currently exclusive-mode or guaranteed bit-perfect. On Windows, it does not use WASAPI exclusive mode. Cast prefers the original source format; FLAC can be sanitized without re-encoding, then converted to compatible FLAC at up to 24-bit/48 kHz when required. Dithered WAV PCM at up to 16-bit/48 kHz is the final compatibility fallback. Lossy inputs remain lossy even when wrapped in WAV.
 
 ## Project status
 

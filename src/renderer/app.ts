@@ -1737,7 +1737,12 @@ async function refreshCastState(render = true): Promise<void> {
     const duration = currentCastState.duration ?? selectedTrack?.durationSeconds;
     const finished = currentCastState.idleReason === "FINISHED"
       || (currentCastState.playerState === "PLAYING" && duration != null && (currentCastState.currentTime ?? 0) >= duration - 0.25);
-    if (finished && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
+    // A receiver-side queue advances by itself and reports the new track through
+    // currentTrackId. Sending our own replacement QUEUE_LOAD at the same boundary
+    // starts that item twice: once from the receiver and once from the renderer.
+    // Only the single-item compatibility pipeline needs desktop auto-advance.
+    const receiverOwnsAutoAdvance = currentCastState.queueActive === true;
+    if (!receiverOwnsAutoAdvance && finished && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
       autoAdvancedTrackId = selectedTrack.id;
       void playNext(true);
     }
@@ -1863,7 +1868,7 @@ function renderCastState(): void {
     return;
   }
   if (currentCastState.deliveryPhase === "converting") {
-    castStatus.textContent = t("convertingWav");
+    castStatus.textContent = currentCastState.deliveryMode === "flac-compatible" ? t("preparingFlac") : t("convertingWav");
     if (selectedTrack) renderDeliveryQuality(selectedTrack);
     updateTaskbarControls();
     return;
@@ -2895,11 +2900,9 @@ function renderPlaybackQuality(track = selectedTrack): void {
 
 function formatEffectiveQuality(track: Track): string {
   const bits = currentCastState.connected ? (currentCastState.deliveryBits ?? track.bitsPerSample) : track.bitsPerSample;
-  const rate = track.sampleRate
-    ? currentCastState.connected && currentCastState.deliveryMode === "wav-lossless"
-      ? Math.min(track.sampleRate, 96_000)
-      : track.sampleRate
-    : undefined;
+  const rate = currentCastState.connected
+    ? (currentCastState.deliverySampleRate ?? track.sampleRate)
+    : track.sampleRate;
   if (!bits && track.bitrate) return `${Math.round(track.bitrate / 1000)} kbps${rate ? ` / ${rate / 1000} kHz` : ""}`;
   return `${bits ? `${bits}-bit` : "— bit"} / ${rate ? `${rate / 1000} kHz` : "— kHz"}`;
 }
@@ -2907,6 +2910,8 @@ function formatEffectiveQuality(track: Track): string {
 function renderDeliveryQuality(track: Track): void {
   const format = currentCastState.deliveryMode === "wav-lossless"
     ? t("wavLossless")
+    : currentCastState.deliveryMode === "flac-compatible"
+      ? t("compatibleFlac")
     : currentCastState.deliveryMode === "flac-repacked"
       ? t("sanitizedFlac")
       : currentCastState.deliveryMode === "flac-cached"

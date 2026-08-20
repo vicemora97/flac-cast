@@ -86,11 +86,11 @@ Local playback receives a `127.0.0.1` URL. Cast receives a LAN IPv4 URL. The sou
 
 ### CastController
 
-`CastController` discovers `_googlecast._tcp` services through mDNS, starts the Default Media Receiver, loads media and bounded receiver queues, tracks receiver state, and controls volume, seek, pause, and resume. It maintains a short-lived device list and refreshes receiver volume separately from media status. When direct playback fails, it can rebuild the receiver session once, retry the original media with a fresh URL, and only then use WAV fallback.
+`CastController` discovers `_googlecast._tcp` services through mDNS, starts the Default Media Receiver, loads media and bounded receiver queues, tracks receiver state, and controls volume, seek, pause, and resume. It maintains a short-lived device list and refreshes receiver volume separately from media status. When direct playback fails, it can rebuild the receiver session once, retry the original media with a fresh URL, and only then use compatible FLAC and universal WAV fallbacks.
 
 ### LosslessTranscoder
 
-`LosslessTranscoder` inspects FLAC headers, copies compatible files into the Cast cache, strips oversized non-audio payloads by stream-copying the FLAC audio when necessary, and creates WAV PCM fallback files. Its cache is bounded by file count and total size.
+`LosslessTranscoder` inspects FLAC headers, copies compatible files into the Cast cache, strips oversized non-audio payloads by stream-copying the FLAC audio when necessary, and creates compatible FLAC or WAV PCM fallback files. Its cache is bounded by file count and total size.
 
 ### PreferencesStore
 

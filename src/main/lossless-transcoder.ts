@@ -30,6 +30,7 @@ type FlacInspection = {
 export class LosslessTranscoder {
   private readonly cacheFolder = join(tmpdir(), "hires-local", "wav-cache");
   private readonly flacInProgress = new Map<string, Promise<PreparedFlac>>();
+  private readonly compatibleFlacInProgress = new Map<string, Promise<string>>();
   private readonly wavInProgress = new Map<string, Promise<string>>();
   private readonly cacheReservations = new Map<string, number>();
   private activeFilePath?: string;
@@ -76,11 +77,42 @@ export class LosslessTranscoder {
     return preparation;
   }
 
-  async toWav(sourcePath: string, bitsPerSample?: number, sampleRate?: number): Promise<string> {
+  async toCompatibleFlac(sourcePath: string, bitsPerSample: 16 | 24, outputSampleRate: number): Promise<string> {
+    if (!ffmpegExecutablePath) throw new Error("FFmpeg no está disponible para preparar FLAC compatible");
+    const sourceStat = await stat(sourcePath);
+    const key = createHash("sha256")
+      .update(`compatible-flac-v1\0${sourcePath}\0${sourceStat.size}\0${sourceStat.mtimeMs}\0${bitsPerSample}\0${outputSampleRate}`)
+      .digest("hex");
+    const outputPath = join(this.cacheFolder, `compatible-${key}.flac`);
+
+    try {
+      const outputStat = await stat(outputPath);
+      if (outputStat.size > 42) {
+        await touch(outputPath);
+        await this.pruneCache(outputPath);
+        return outputPath;
+      }
+      await unlink(outputPath);
+    } catch { /* Todavía no está en caché. */ }
+
+    const existing = this.compatibleFlacInProgress.get(outputPath);
+    if (existing) return existing;
+
+    this.cacheReservations.set(outputPath, sourceStat.size);
+    const conversion = this.convertToCompatibleFlac(sourcePath, outputPath, bitsPerSample, outputSampleRate)
+      .finally(() => {
+        this.compatibleFlacInProgress.delete(outputPath);
+        this.cacheReservations.delete(outputPath);
+      });
+    this.compatibleFlacInProgress.set(outputPath, conversion);
+    return conversion;
+  }
+
+  async toWav(sourcePath: string, bitsPerSample?: number, sampleRate?: number, outputSampleRate?: number): Promise<string> {
     if (!ffmpegExecutablePath) throw new Error("FFmpeg no está disponible para la conversión lossless");
     const sourceStat = await stat(sourcePath);
     const key = createHash("sha256")
-      .update(`${sourcePath}\0${sourceStat.size}\0${sourceStat.mtimeMs}\0${bitsPerSample}\0${sampleRate}`)
+      .update(`${sourcePath}\0${sourceStat.size}\0${sourceStat.mtimeMs}\0${bitsPerSample}\0${sampleRate}\0${outputSampleRate}`)
       .digest("hex");
     const outputPath = join(this.cacheFolder, `${key}.wav`);
 
@@ -97,7 +129,7 @@ export class LosslessTranscoder {
     const existing = this.wavInProgress.get(outputPath);
     if (existing) return existing;
 
-    const conversion = this.convertToWav(sourcePath, outputPath, bitsPerSample, sampleRate)
+    const conversion = this.convertToWav(sourcePath, outputPath, bitsPerSample, sampleRate, outputSampleRate)
       .finally(() => this.wavInProgress.delete(outputPath));
     this.wavInProgress.set(outputPath, conversion);
     return conversion;
@@ -135,14 +167,49 @@ export class LosslessTranscoder {
     }
   }
 
-  private async convertToWav(sourcePath: string, outputPath: string, bitsPerSample?: number, sampleRate?: number): Promise<string> {
+  private async convertToCompatibleFlac(
+    sourcePath: string,
+    outputPath: string,
+    bitsPerSample: 16 | 24,
+    outputSampleRate: number
+  ): Promise<string> {
+    if (!ffmpegExecutablePath) throw new Error("FFmpeg no está disponible para preparar FLAC compatible");
+    await mkdir(this.cacheFolder, { recursive: true });
+    await this.pruneCache(outputPath);
+    const temporaryPath = join(this.cacheFolder, `${basename(outputPath, ".flac")}.${randomUUID()}.tmp.flac`);
+    const sampleFormat = bitsPerSample === 16 ? "s16" : "s32";
+    try {
+      await execFileAsync(ffmpegExecutablePath, [
+        "-hide_banner", "-loglevel", "error", "-threads", "1", "-y",
+        "-i", sourcePath,
+        "-map", "0:a:0", "-vn", "-map_metadata", "0", "-map_chapters", "-1",
+        "-c:a", "flac", "-compression_level", "5", "-sample_fmt", sampleFormat,
+        "-ar", String(outputSampleRate), temporaryPath
+      ], { windowsHide: true, maxBuffer: 1024 * 1024 });
+      await rename(temporaryPath, outputPath);
+      await this.pruneCache(outputPath);
+      return outputPath;
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => undefined);
+      throw new Error(`No se pudo preparar ${basename(sourcePath)} como FLAC compatible: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private async convertToWav(
+    sourcePath: string,
+    outputPath: string,
+    bitsPerSample?: number,
+    sampleRate?: number,
+    outputSampleRate?: number
+  ): Promise<string> {
     if (!ffmpegExecutablePath) throw new Error("FFmpeg no está disponible para la conversión lossless");
     await mkdir(this.cacheFolder, { recursive: true });
     const codec = (bitsPerSample ?? 24) > 16 ? "pcm_s24le" : "pcm_s16le";
     const temporaryPath = join(this.cacheFolder, `${basename(outputPath, ".wav")}.${randomUUID()}.tmp.wav`);
     const args = ["-hide_banner", "-loglevel", "error", "-threads", "1", "-y", "-i", sourcePath, "-map", "0:a:0", "-vn", "-c:a", codec];
     if (codec === "pcm_s16le") args.push("-af", "aresample=dither_method=triangular_hp");
-    if (sampleRate && sampleRate > 96_000) args.push("-ar", "96000");
+    if (outputSampleRate) args.push("-ar", String(outputSampleRate));
+    else if (sampleRate && sampleRate > 96_000) args.push("-ar", "96000");
     args.push(temporaryPath);
 
     try {
@@ -171,6 +238,7 @@ export class LosslessTranscoder {
         currentPath,
         ...(this.activeFilePath ? [this.activeFilePath] : []),
         ...this.flacInProgress.keys(),
+        ...this.compatibleFlacInProgress.keys(),
         ...this.wavInProgress.keys(),
         ...this.cacheReservations.keys()
       ]);

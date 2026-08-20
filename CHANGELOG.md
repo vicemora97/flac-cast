@@ -18,11 +18,14 @@ All notable changes to Flac Cast are documented in this file.
 - Long now-playing track titles scroll independently using the same slow marquee behavior as long artist lists.
 - Cast queues preserve the manual FIFO priority layer and include recent history for receiver-side Previous.
 - Search-index sorting now follows both the selected criterion and direction.
+- Cast compatibility fallback now tries FLAC at up to 24-bit/48 kHz before universal dithered WAV PCM at up to 16-bit/48 kHz, and reports the effective output rate.
 
 ### Fixed
 
 - Added one-shot Cast session recovery and cache-busted direct-audio retry before WAV fallback when a stale receiver session rejects an otherwise valid file.
 - Added one-shot receiver-session recovery and a cache-busted `QUEUE_LOAD` retry before disabling remote queue controls for the connection.
+- Prevented delayed events from an abandoned Cast socket from disconnecting its replacement session, limited each track change to one soft receiver reconnection, and verified WAV stability before reporting playback.
+- Prevented the desktop auto-advance timer from reloading a track that an active receiver-side queue had already started.
 - Added automatic recovery when a queued item fails after a receiver-side transition, while preventing retry loops.
 - Restored verified single-track playback when a receiver rejects `QUEUE_LOAD`, preventing optional remote queue support from breaking Cast startup.
 - Removed the successful `LOAD` followed by `QUEUE_LOAD` sequence that audibly restarted every Cast track after roughly one second.

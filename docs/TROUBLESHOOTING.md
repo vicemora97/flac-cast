@@ -52,11 +52,11 @@ The Cast panel may show whether the receiver reached the PC and whether it reque
 
 ## Direct FLAC is rejected
 
-Flac Cast retries with an alternate FLAC MIME type, a sanitized FLAC container, a fresh receiver session and URL, and finally a WAV PCM fallback. Published Google Cast codec capabilities do not guarantee identical support in every third-party receiver implementation.
+Flac Cast retries with an alternate FLAC MIME type, a sanitized FLAC container, a fresh receiver session and URL, compatible FLAC capped at 24-bit/48 kHz, and finally dithered WAV PCM capped at 16-bit/48 kHz. Published Google Cast codec capabilities do not guarantee identical support in every third-party receiver implementation.
 
 ## A track sometimes fails but works after reconnecting
 
-Version 1.0.4 automatically treats the first rejection as potentially transient. It records the failed MIME attempt, rebuilds the Default Media Receiver session once, retries the original audio with a cache-busting URL while preserving position and queue, and only then converts to WAV. Initial `QUEUE_LOAD` startup and a queued item that fails during a receiver-side transition each receive one bounded session-recovery attempt. Retries are keyed or locally bounded so a persistently incompatible file cannot create an infinite loop.
+Version 1.0.4 automatically treats the first rejection as potentially transient. It records the failed MIME attempt, replaces the stale sender connection once without explicitly stopping the receiver, retries the original audio with a cache-busting URL while preserving position and queue, and only then converts to WAV. Initial `QUEUE_LOAD` startup and a queued item that fails during a receiver-side transition each receive one bounded session-recovery attempt. The single-item fallback cannot initiate a second recovery for the same track change, and delayed events from the abandoned socket cannot invalidate the replacement session. Retries are keyed or locally bounded so a persistently incompatible file cannot create an infinite loop.
 
 Inspect the footer quality badge and Cast panel to identify the selected delivery mode.
 

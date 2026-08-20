@@ -36,8 +36,9 @@ export type CastState = {
   muted?: boolean;
   error?: string;
   idleReason?: string;
-  deliveryMode?: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless";
+  deliveryMode?: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "flac-compatible" | "wav-lossless";
   deliveryBits?: number;
+  deliverySampleRate?: number;
   deliveryPhase?: "preparing" | "loading" | "converting" | "playing" | "failed";
   currentTrackId?: string;
   repeatMode?: "off" | "all" | "single";

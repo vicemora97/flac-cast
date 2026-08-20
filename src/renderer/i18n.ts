@@ -197,6 +197,7 @@ const en = {
   originalAudio: "Original audio",
   sanitizedFlac: "Original FLAC · sanitized container",
   cachedFlac: "Original FLAC · local cache",
+  compatibleFlac: "Compatible FLAC",
   wavLossless: "Lossless WAV PCM"
 } as const;
 
@@ -270,7 +271,7 @@ const es: Record<TranslationKey, string> = {
   lyricsAvailable: "Ver letra sincronizada", lyricsFailed: "No se pudo consultar la letra sincronizada",
   shuffleEnabled: "Aleatorio activado", repeatAlbum: "Repetir álbum", repeatTrack: "Repetir canción",
   changeToTrackRepeat: "Cambiar a repetición de canción", disableRepeat: "Desactivar repetición", artworkAlt: "Carátula del álbum",
-  originalFlac: "FLAC original", originalAudio: "Audio original", sanitizedFlac: "FLAC original · contenedor saneado", cachedFlac: "FLAC original · caché local",
+  originalFlac: "FLAC original", originalAudio: "Audio original", sanitizedFlac: "FLAC original · contenedor saneado", cachedFlac: "FLAC original · caché local", compatibleFlac: "FLAC compatible",
   wavLossless: "WAV PCM lossless"
 };
 

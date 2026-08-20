@@ -32,21 +32,21 @@ For FLAC tracks, Flac Cast uses this compatibility order:
 2. try `audio/flac`;
 3. try `audio/x-flac`;
 4. if direct playback fails, rebuild the receiver session once and retry the original media with a cache-busting URL;
-5. create a lossless WAV PCM fallback;
-6. try `audio/wav`;
-7. try `audio/x-wav`.
+5. create a compatible FLAC capped at 24-bit/48 kHz and try both FLAC MIME types;
+6. create a universal dithered WAV PCM fallback capped at 16-bit/48 kHz;
+7. try `audio/wav` and `audio/x-wav`.
 
-Other supported containers are first sent with their registered MIME type. If the receiver rejects them after the same one-shot session recovery, the PC prepares a WAV fallback. Converting a lossy MP3, AAC, or Ogg source to WAV does not restore information that was absent from the source; it is a compatibility conversion, not an increase in fidelity.
+Other supported containers are first sent with their registered MIME type. If the receiver rejects them after the same one-shot session recovery, the PC prepares the universal WAV fallback. Converting a lossy MP3, AAC, or Ogg source to WAV does not restore information that was absent from the source; it is a compatibility conversion, not an increase in fidelity.
 
 ### Prepared FLAC
 
 Most files are copied to a bounded temporary cache. FLAC files with unusually large metadata, embedded images, or padding can be repacked with FFmpeg using audio stream copy. This changes the container layout but does not re-encode FLAC audio.
 
-### WAV fallback
+### Compatible fallbacks
 
-If the receiver rejects FLAC, the PC performs the conversion. It uses 16-bit PCM for source files at 16-bit or below and 24-bit PCM for higher bit-depth sources. Conversion remains lossless relative to the selected PCM target. When reducing from greater bit depth to 16-bit, FFmpeg applies high-pass triangular dithering.
+If the receiver rejects original FLAC, the PC first re-encodes a metadata-light FLAC at the source bit depth up to 24-bit and source sample rate up to 48 kHz. Sources above 48 kHz are resampled; FLAC compression remains lossless relative to that resampled PCM signal.
 
-Sample rates above 96 kHz are reduced to 96 kHz only in the WAV fallback. Direct and sanitized FLAC preserve the source sample rate and bit depth; actual receiver decoding capability still depends on the hardware and firmware.
+If compatible FLAC is also rejected, Flac Cast creates PCM WAV at 16-bit and no more than 48 kHz. FFmpeg applies high-pass triangular dithering when reducing a higher-bit-depth source. This final format was selected because some third-party Cast receivers download 24-bit PCM successfully but never leave `IDLE` or produce reliable audio.
 
 ## Effective quality display
 
@@ -54,8 +54,8 @@ The footer badge and Cast panel report effective delivery information:
 
 - original bit depth/sample rate for local playback;
 - original values for direct or cached FLAC;
-- fallback PCM bit depth for WAV;
-- 96 kHz when a greater source rate is reduced for WAV compatibility.
+- effective values for compatible FLAC;
+- effective 16-bit/sample-rate values for the universal WAV fallback.
 
 This describes what Flac Cast sends. It cannot guarantee that a TV, soundbar, HDMI link, DSP stage, or DAC does not resample internally.
 
@@ -73,9 +73,11 @@ Flac Cast sends up to 40 queue items to the Default Media Receiver: up to five r
 
 The receiver assigns queue item IDs and can process Previous, Next, and repeat commands without waiting for the renderer to load each track. Status messages include the active track ID, allowing Flac Cast to follow transitions initiated from Google Home. Shuffle is materialized as the already shuffled scheduled order; manual FIFO entries remain first.
 
+When this receiver-side queue is active, the receiver is the sole owner of automatic track transitions and Flac Cast adopts the reported `currentTrackId`. Desktop auto-advance remains enabled only for the single-item compatibility pipeline. This prevents both sides from starting the same next item roughly one second apart.
+
 Google Home chooses which controls and queue details to render for each receiver and firmware version. Supplying a valid queue makes the controls available to compatible surfaces but does not guarantee every UI will display all of them.
 
-Flac Cast now starts with a single `QUEUE_LOAD`; it does not play the current item through `LOAD` first. This avoids an audible start, interruption, and restart at zero. The app validates that queued playback reaches and remains in `PLAYING`. If the receiver rejects the first queue request, Flac Cast rebuilds the Default Media Receiver session once and retries the same queue with a cache-busted current-media URL. Only if that bounded retry also fails does it switch to the single-item compatibility pipeline, disable further queue synchronization for that connection, and report that remote queue controls are unavailable. A later manual reconnect permits one fresh queue capability test.
+Flac Cast now starts with a single `QUEUE_LOAD`; it does not play the current item through `LOAD` first. This avoids an audible start, interruption, and restart at zero. The app validates that queued playback reaches and remains in `PLAYING`. If the receiver rejects the first queue request, Flac Cast closes only the stale sender transport, attaches a fresh session once, and retries the same queue with a cache-busted current-media URL. Delayed status or error events from the abandoned transport are ignored. Only if that bounded retry also fails does it switch to the single-item compatibility pipeline without starting another recovery, disable further queue synchronization for that connection, and report that remote queue controls are unavailable. A later manual reconnect permits one fresh queue capability test.
 
 If a receiver-side transition ends in `IDLE/ERROR`, the renderer makes one recovery attempt for that receiver/track pair. The controller rebuilds the Default Media Receiver session, preserves the intended track position and queue, retries original audio, and then uses WAV if required. The retry key is cleared only after playback succeeds, preventing an infinite reconnect loop.
 

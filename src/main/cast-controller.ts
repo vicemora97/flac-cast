@@ -3,7 +3,8 @@ import { Client, DefaultMediaReceiver, type CastMediaStatus } from "castv2-clien
 import type { CastDevice, CastQueueRequest, CastState, CastTrack } from "../shared/contracts.js";
 
 type KnownDevice = CastDevice & { host: string; lastSeen: number };
-type LosslessFallback = (track: CastTrack, targetBits: 16 | 24) => Promise<string>;
+type LosslessFallback = (track: CastTrack, targetBits: 16 | 24, targetSampleRate: number) => Promise<string>;
+type CompatibleFlacFallback = (track: CastTrack, targetBits: 16 | 24, targetSampleRate: number) => Promise<string>;
 type PreparedFlac = { url: string; repacked: boolean };
 type FlacPreparer = (track: CastTrack) => Promise<PreparedFlac>;
 type ReceiverStatus = { volume?: { level?: number; muted?: boolean } };
@@ -23,7 +24,8 @@ export class CastController {
 
   constructor(
     private readonly prepareFlac: FlacPreparer,
-    private readonly createLosslessFallback: LosslessFallback
+    private readonly createLosslessFallback: LosslessFallback,
+    private readonly createCompatibleFlac: CompatibleFlacFallback
   ) {
     this.bonjour = new Bonjour({}, (error: Error) => {
       this.state = { ...this.state, error: `No se pudo usar mDNS: ${error.message}` };
@@ -91,9 +93,11 @@ export class CastController {
       }), 8_000, "Tiempo de conexión agotado");
 
       client.on("error", (error: Error) => {
-        this.invalidateSession(error.message);
+        if (this.client === client) this.invalidateSession(error.message);
       });
-      client.on("status", (status: ReceiverStatus) => this.applyReceiverStatus(status));
+      client.on("status", (status: ReceiverStatus) => {
+        if (this.client === client) this.applyReceiverStatus(status);
+      });
 
       const player = await withTimeout(new Promise<DefaultMediaReceiver>((resolve, reject) => {
         client.launch(DefaultMediaReceiver, (error, receiver) => {
@@ -106,24 +110,28 @@ export class CastController {
       this.player = player;
       this.state = { connected: true, deviceId, deviceName: device.name, deviceModel: device.model, playerState: "IDLE" };
       this.stateUpdatedAt = Date.now();
-      player.on("status", (status: CastMediaStatus) => this.applyStatus(status));
+      player.on("status", (status: CastMediaStatus) => {
+        if (this.player === player) this.applyStatus(status);
+      });
       player.once("close", () => this.handleSessionClosed(player));
       client.getVolume((error, volume) => {
-        if (!error && volume) {
+        if (this.client === client && !error && volume) {
           this.state = { ...this.state, volumeLevel: volume.level, muted: volume.muted };
         }
       });
       return this.getState();
     } catch (error) {
       try { client.close(); } catch { /* La conexión nunca llegó a abrirse. */ }
-      this.client = undefined;
-      this.player = undefined;
-      this.state = { connected: false, error: error instanceof Error ? error.message : String(error) };
+      if (this.client === client) {
+        this.client = undefined;
+        this.player = undefined;
+        this.state = { connected: false, error: error instanceof Error ? error.message : String(error) };
+      }
       throw error;
     }
   }
 
-  async castTrack(track: CastTrack, startTimeSeconds = 0): Promise<CastState> {
+  async castTrack(track: CastTrack, startTimeSeconds = 0, allowSessionRecovery = true): Promise<CastState> {
     if (!this.player || !this.state.connected) throw new Error("Primero selecciona un dispositivo Chromecast");
     if (!track.castUrl) throw new Error("No hay una dirección de red local disponible para esta pista");
     const requestedStartTime = Number.isFinite(startTimeSeconds) ? startTimeSeconds : 0;
@@ -139,6 +147,7 @@ export class CastController {
       error: undefined,
       deliveryMode: isFlac(track) ? "flac-cached" : "original",
       deliveryBits: track.bitsPerSample,
+      deliverySampleRate: track.sampleRate,
       deliveryPhase: "preparing",
       currentTime: startTime,
       duration: track.durationSeconds,
@@ -167,10 +176,37 @@ export class CastController {
     // A stale Default Media Receiver session can answer with a media error even
     // when the exact same file is valid after reconnecting. Recover once and
     // retry the original URL (with a cache-busting query) before transcoding.
-    if (await this.recoverCurrentDevice(`direct playback failed for ${track.id}`, recoveryDeviceId)) {
+    if (allowSessionRecovery && await this.recoverCurrentDevice(`direct playback failed for ${track.id}`, recoveryDeviceId)) {
       const retryUrl = appendRetryToken(directUrl);
       if (await this.tryDirectCandidates(track, retryUrl, directTypes, metadata, directMode, startTime, "recovered")) {
         return this.getState();
+      }
+    }
+
+    const compatibleBits: 16 | 24 = track.bitsPerSample && track.bitsPerSample > 16 ? 24 : 16;
+    const compatibleRate = compatibleSampleRate(track.sampleRate);
+    if (isFlac(track)) {
+      this.state = {
+        ...this.state,
+        playerState: "BUFFERING",
+        idleReason: undefined,
+        error: undefined,
+        deliveryMode: "flac-compatible",
+        deliveryBits: compatibleBits,
+        deliverySampleRate: compatibleRate,
+        deliveryPhase: "converting",
+        currentTime: startTime,
+        duration: track.durationSeconds
+      };
+      try {
+        const compatibleUrl = await this.createCompatibleFlac(track, compatibleBits, compatibleRate);
+        for (const contentType of ["audio/flac", "audio/x-flac"]) {
+          if (await this.tryLoad(compatibleUrl, contentType, track.durationSeconds, metadata, "flac-compatible", 6_000, 2_000, startTime)) {
+            return this.getState();
+          }
+        }
+      } catch (error) {
+        console.warn(`[cast] compatible FLAC preparation failed for "${track.title}"`, error);
       }
     }
 
@@ -180,20 +216,20 @@ export class CastController {
       idleReason: undefined,
       error: undefined,
       deliveryMode: "wav-lossless",
-      deliveryBits: track.bitsPerSample && track.bitsPerSample > 16 ? 24 : 16,
+      deliveryBits: 16,
+      deliverySampleRate: compatibleRate,
       deliveryPhase: "converting",
       currentTime: startTime,
       duration: track.durationSeconds
     };
-    const targetBits = this.state.deliveryBits === 16 ? 16 : 24;
-    const wavUrl = await this.createLosslessFallback(track, targetBits);
+    const wavUrl = await this.createLosslessFallback(track, 16, compatibleRate);
     for (const contentType of ["audio/wav", "audio/x-wav"]) {
-      if (await this.tryLoad(wavUrl, contentType, track.durationSeconds, metadata, "wav-lossless", 8_000, 0, startTime)) {
+      if (await this.tryLoad(wavUrl, contentType, track.durationSeconds, metadata, "wav-lossless", 8_000, 2_000, startTime)) {
         return this.getState();
       }
     }
     this.state = { ...this.state, deliveryPhase: "failed" };
-    throw new Error("The receiver rejected both the original audio and the lossless WAV fallback");
+    throw new Error("The receiver rejected the original audio, compatible FLAC, and PCM fallback");
   }
 
   async castQueue(request: CastQueueRequest): Promise<CastState> {
@@ -218,6 +254,7 @@ export class CastController {
       error: undefined,
       deliveryMode: isFlac(current) ? "flac-cached" : "original",
       deliveryBits: current.bitsPerSample,
+      deliverySampleRate: current.sampleRate,
       deliveryPhase: "preparing",
       currentTime: startTime,
       duration: current.durationSeconds,
@@ -255,8 +292,8 @@ export class CastController {
     // switch to the proven single-item pipeline only after the bounded recovery
     // attempt. This prevents both false capability negatives and retry loops.
     console.warn("[cast] queueLoad failed after session recovery; switching this connection to single-item playback");
-    const restored = await this.castTrack(current, startTime);
     this.queueAllowed = false;
+    const restored = await this.castTrack(current, startTime, false);
     this.state = { ...restored, queueActive: false };
     return this.getState();
   }
@@ -417,7 +454,8 @@ export class CastController {
     request: CastQueueRequest,
     startTime: number
   ): Promise<boolean> {
-    if (!this.player) return false;
+    const player = this.player;
+    if (!player) return false;
     const items: Array<Record<string, unknown>> = [];
     let startIndex = -1;
     tracks.forEach((track, index) => {
@@ -453,22 +491,23 @@ export class CastController {
     };
     try {
       const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
-        this.player!.queueLoad(items, {
+        player.queueLoad(items, {
           startIndex,
           currentTime: startTime,
           repeatMode: castRepeatMode(request.repeatMode)
         }, (error, result) => error ? reject(error) : resolve(result ?? {}));
       }), 8_000, "Chromecast did not accept the playback queue");
+      if (this.player !== player) return false;
       this.applyStatus(status);
       if (status.playerState === "IDLE" && status.idleReason === "ERROR") return false;
-      const playing = status.playerState === "PLAYING" || await this.waitForPlaybackOutcome(4_000);
-      const stable = playing && await this.confirmPlaybackStability(1_200);
-      if (!stable) return false;
+      const playing = status.playerState === "PLAYING" || await this.waitForPlaybackOutcome(player, 4_000);
+      const stable = playing && await this.confirmPlaybackStability(player, 1_200);
+      if (!stable || this.player !== player) return false;
       this.lastLoadedContent = { contentId: currentContentId, contentType: currentContentType };
       this.state = { ...this.state, queueActive: true };
       return true;
     } catch (error) {
-      console.warn(`[cast] queueLoad failed (${currentContentType})`, error);
+      if (this.player === player) console.warn(`[cast] queueLoad failed (${currentContentType})`, error);
       return false;
     }
   }
@@ -478,12 +517,13 @@ export class CastController {
     contentType: string,
     duration: number | undefined,
     metadata: Record<string, unknown>,
-    deliveryMode: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless",
+    deliveryMode: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "flac-compatible" | "wav-lossless",
     waitMilliseconds = 4_000,
     stabilityMilliseconds = 0,
     startTime = 0
   ): Promise<boolean> {
-    if (!this.player) return false;
+    const player = this.player;
+    if (!player) return false;
     this.state = {
       ...this.state,
       playerState: "BUFFERING",
@@ -496,26 +536,27 @@ export class CastController {
     };
     try {
       const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
-        this.player!.load({ contentId, contentType, streamType: "BUFFERED", duration, metadata }, { autoplay: true, currentTime: startTime }, (error, result) => {
+        player.load({ contentId, contentType, streamType: "BUFFERED", duration, metadata }, { autoplay: true, currentTime: startTime }, (error, result) => {
           if (error) reject(error);
           else resolve((result ?? {}) as CastMediaStatus);
         });
       }), 6_000, `Chromecast no pudo cargar ${contentType}`);
+      if (this.player !== player) return false;
       this.applyStatus(status);
       if (status.playerState === "PLAYING") {
-        const stable = stabilityMilliseconds > 0 ? await this.confirmPlaybackStability(stabilityMilliseconds) : true;
-        if (stable) this.lastLoadedContent = { contentId, contentType };
-        return stable;
+        const stable = stabilityMilliseconds > 0 ? await this.confirmPlaybackStability(player, stabilityMilliseconds) : true;
+        if (stable && this.player === player) this.lastLoadedContent = { contentId, contentType };
+        return stable && this.player === player;
       }
       if (status.playerState === "IDLE" && status.idleReason === "ERROR") return false;
-      const playing = await this.waitForPlaybackOutcome(waitMilliseconds);
+      const playing = await this.waitForPlaybackOutcome(player, waitMilliseconds);
       const stable = playing && stabilityMilliseconds > 0
-        ? await this.confirmPlaybackStability(stabilityMilliseconds)
+        ? await this.confirmPlaybackStability(player, stabilityMilliseconds)
         : playing;
-      if (stable) this.lastLoadedContent = { contentId, contentType };
-      return stable;
+      if (stable && this.player === player) this.lastLoadedContent = { contentId, contentType };
+      return stable && this.player === player;
     } catch (error) {
-      console.warn(`[cast] load failed (${contentType})`, error);
+      if (this.player === player) console.warn(`[cast] load failed (${contentType})`, error);
       return false;
     }
   }
@@ -525,7 +566,7 @@ export class CastController {
     url: string,
     contentTypes: string[],
     metadata: Record<string, unknown>,
-    deliveryMode: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless",
+    deliveryMode: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "flac-compatible" | "wav-lossless",
     startTime: number,
     attempt: string
   ): Promise<boolean> {
@@ -542,7 +583,10 @@ export class CastController {
     this.recoveryInProgress = true;
     console.warn(`[cast] recovering receiver session: ${reason}`);
     try {
-      await this.disconnect(true);
+      // Close only the sender transport. Explicitly stopping the receiver here
+      // produces connection chimes and lets late errors from the old socket race
+      // with the replacement session.
+      await this.disconnect(false);
       await this.connect(deviceId);
       return true;
     } catch (error) {
@@ -553,9 +597,9 @@ export class CastController {
     }
   }
 
-  private waitForPlaybackOutcome(milliseconds: number): Promise<boolean> {
+  private waitForPlaybackOutcome(player: DefaultMediaReceiver, milliseconds: number): Promise<boolean> {
     return new Promise((resolve) => {
-      if (!this.player) {
+      if (this.player !== player) {
         resolve(false);
         return;
       }
@@ -564,21 +608,21 @@ export class CastController {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        this.player?.removeListener("status", onStatus);
+        player.removeListener("status", onStatus);
         resolve(result);
       };
       const onStatus = (status: CastMediaStatus) => {
         if (status.playerState === "PLAYING") finish(true);
         else if (status.playerState === "IDLE" && status.idleReason === "ERROR") finish(false);
       };
-      const timer = setTimeout(() => finish(this.state.playerState === "PLAYING"), milliseconds);
-      this.player.on("status", onStatus);
+      const timer = setTimeout(() => finish(this.player === player && this.state.playerState === "PLAYING"), milliseconds);
+      player.on("status", onStatus);
     });
   }
 
-  private confirmPlaybackStability(milliseconds: number): Promise<boolean> {
+  private confirmPlaybackStability(player: DefaultMediaReceiver, milliseconds: number): Promise<boolean> {
     return new Promise((resolve) => {
-      if (!this.player) {
+      if (this.player !== player) {
         resolve(false);
         return;
       }
@@ -587,16 +631,16 @@ export class CastController {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        this.player?.removeListener("status", onStatus);
+        player.removeListener("status", onStatus);
         resolve(result);
       };
       const onStatus = (status: CastMediaStatus) => {
         if (status.playerState === "IDLE" && status.idleReason === "ERROR") finish(false);
       };
       const timer = setTimeout(() => {
-        finish(this.state.playerState !== "IDLE" || this.state.idleReason !== "ERROR");
+        finish(this.player === player && (this.state.playerState !== "IDLE" || this.state.idleReason !== "ERROR"));
       }, milliseconds);
-      this.player.on("status", onStatus);
+      player.on("status", onStatus);
     });
   }
 }
@@ -613,6 +657,11 @@ function isPositiveInteger(value: number | undefined): value is number {
 
 function isFlac(track: CastTrack): boolean {
   return track.fileExtension?.toLowerCase() === ".flac" || track.contentType?.toLowerCase().includes("flac") === true;
+}
+
+function compatibleSampleRate(sampleRate: number | undefined): number {
+  if (!sampleRate || !Number.isFinite(sampleRate)) return 48_000;
+  return Math.max(8_000, Math.min(48_000, Math.round(sampleRate)));
 }
 
 function directContentTypes(track: CastTrack): string[] {

@@ -45,14 +45,24 @@ const castController = new CastController(
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el FLAC preparado");
     return { url: endpoint.castUrl, repacked: prepared.repacked };
   },
-  async (track, targetBits) => {
+  async (track, targetBits, targetSampleRate) => {
     if (!track.castUrl) throw new Error("La pista no tiene una URL local para Chromecast");
     const sourcePath = mediaServer.resolveFile(track.castUrl);
     if (!sourcePath) throw new Error("No se encontró el archivo local para convertirlo");
-    const wavPath = await transcoder.toWav(sourcePath, targetBits, track.sampleRate);
+    const wavPath = await transcoder.toWav(sourcePath, targetBits, track.sampleRate, targetSampleRate);
     transcoder.setActiveFile(wavPath);
     const endpoint = mediaServer.register(wavPath, castController.getReceiverHost());
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el WAV");
+    return endpoint.castUrl;
+  },
+  async (track, targetBits, targetSampleRate) => {
+    if (!track.castUrl) throw new Error("La pista no tiene una URL local para Chromecast");
+    const sourcePath = mediaServer.resolveFile(track.castUrl);
+    if (!sourcePath) throw new Error("No se encontró el archivo local para preparar FLAC compatible");
+    const compatiblePath = await transcoder.toCompatibleFlac(sourcePath, targetBits, targetSampleRate);
+    transcoder.setActiveFile(compatiblePath);
+    const endpoint = mediaServer.register(compatiblePath, castController.getReceiverHost());
+    if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el FLAC compatible");
     return endpoint.castUrl;
   }
 );
