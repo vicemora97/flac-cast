@@ -8,7 +8,7 @@ Flac Cast is both a Cast controller and a temporary HTTP origin. The receiver do
 2. it launches Google's Default Media Receiver over Cast v2;
 3. it sends a LAN URL and media metadata;
 4. the receiver opens that URL directly from the PC;
-5. the PC streams the selected lossless file over HTTP.
+5. the PC streams the selected audio file over HTTP.
 
 The PC and receiver must be mutually reachable on the same local network. Guest Wi-Fi, client isolation, VPN routes, virtual adapters, and public-network firewall rules can prevent discovery or streaming.
 
@@ -26,14 +26,17 @@ The controller browses `_googlecast._tcp` services with `bonjour-service`. It re
 
 ## Delivery sequence
 
-For every track, Flac Cast uses this compatibility order:
+For FLAC tracks, Flac Cast uses this compatibility order:
 
 1. inspect and prepare a cached FLAC;
 2. try `audio/flac`;
 3. try `audio/x-flac`;
-4. create a lossless WAV PCM fallback;
-5. try `audio/wav`;
-6. try `audio/x-wav`.
+4. if direct playback fails, rebuild the receiver session once and retry the original media with a cache-busting URL;
+5. create a lossless WAV PCM fallback;
+6. try `audio/wav`;
+7. try `audio/x-wav`.
+
+Other supported containers are first sent with their registered MIME type. If the receiver rejects them after the same one-shot session recovery, the PC prepares a WAV fallback. Converting a lossy MP3, AAC, or Ogg source to WAV does not restore information that was absent from the source; it is a compatibility conversion, not an increase in fidelity.
 
 ### Prepared FLAC
 
@@ -63,6 +66,18 @@ After a Cast session starts, the renderer schedules preparation for up to five u
 Manually added FIFO tracks take priority over the scheduled queue. When that priority window changes, new uncached FLAC files reserve cache capacity before they are copied; older unprotected preparations are removed first when the eight-file or 1 GiB limit would be exceeded.
 
 Prewarming is canceled when the Cast generation changes or the receiver disconnects.
+
+## Receiver queue and remote controls
+
+Flac Cast sends up to 40 queue items to the Default Media Receiver: up to five recent history items, the current track, manually added FIFO entries, and then the scheduled context. The bound keeps Cast protocol messages and receiver memory predictable even when the desktop queue contains thousands of tracks.
+
+The receiver assigns queue item IDs and can process Previous, Next, and repeat commands without waiting for the renderer to load each track. Status messages include the active track ID, allowing Flac Cast to follow transitions initiated from Google Home. Shuffle is materialized as the already shuffled scheduled order; manual FIFO entries remain first.
+
+Google Home chooses which controls and queue details to render for each receiver and firmware version. Supplying a valid queue makes the controls available to compatible surfaces but does not guarantee every UI will display all of them.
+
+Flac Cast now starts with a single `QUEUE_LOAD`; it does not play the current item through `LOAD` first. This avoids an audible start, interruption, and restart at zero. The app validates that queued playback reaches and remains in `PLAYING`. If the receiver rejects the first queue request, Flac Cast rebuilds the Default Media Receiver session once and retries the same queue with a cache-busted current-media URL. Only if that bounded retry also fails does it switch to the single-item compatibility pipeline, disable further queue synchronization for that connection, and report that remote queue controls are unavailable. A later manual reconnect permits one fresh queue capability test.
+
+If a receiver-side transition ends in `IDLE/ERROR`, the renderer makes one recovery attempt for that receiver/track pair. The controller rebuilds the Default Media Receiver session, preserves the intended track position and queue, retries original audio, and then uses WAV if required. The retry key is cleared only after playback succeeds, preventing an infinite reconnect loop.
 
 ## Cache policy
 

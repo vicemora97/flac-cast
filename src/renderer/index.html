@@ -71,9 +71,17 @@
         <label id="track-sort-control" class="sort-control">
           <span data-i18n="sort">Sort</span>
           <select id="track-sort" data-i18n-aria="sortTracks" aria-label="Sort tracks">
-            <option value="artist" data-i18n="sortArtist">Artist A–Z</option>
-            <option value="title" data-i18n="sortTitle">Track A–Z</option>
-            <option value="quality" data-i18n="sortQuality">Highest quality</option>
+            <option value="artist" data-i18n="sortArtist">Artist</option>
+            <option value="title" data-i18n="sortTitle">Track</option>
+            <option value="album" data-i18n="sortAlbum">Album</option>
+            <option value="quality" data-i18n="sortQuality">Quality</option>
+          </select>
+        </label>
+        <label id="track-order-control" class="sort-control order-control">
+          <span data-i18n="order">Order</span>
+          <select id="track-order" data-i18n-aria="sortOrder" aria-label="Sort order">
+            <option value="asc">A–Z</option>
+            <option value="desc">Z–A</option>
           </select>
         </label>
         <div class="status">
@@ -84,7 +92,7 @@
         </div>
       </section>
       <section id="tracks" class="tracks">
-        <div class="empty" data-i18n="selectFlacFolder">Select a folder containing FLAC files to get started.</div>
+        <div class="empty" data-i18n="selectFlacFolder">Select a folder containing supported audio files to get started.</div>
       </section>
     </main>
 
@@ -114,7 +122,7 @@
         <button id="cast-toggle" data-i18n="pause">Pause</button>
         <button id="cast-disconnect" data-i18n="disconnect">Disconnect</button>
       </div>
-      <p id="cast-quality" class="cast-quality" data-i18n="castOriginal">The original FLAC is sent without transcoding.</p>
+      <p id="cast-quality" class="cast-quality" data-i18n="castOriginal">Original audio is sent whenever the receiver supports it.</p>
     </aside>
 
     <aside id="playlist-picker" class="playlist-picker" hidden>
@@ -193,7 +201,7 @@
         <div id="now-art" class="artwork artwork-player artwork-placeholder" aria-hidden="true"><svg class="placeholder-icon"><use href="#icon-music" /></svg></div>
         <div class="now-playing">
           <span class="eyebrow" data-i18n="nowPlaying">NOW PLAYING</span>
-          <strong id="now-title" data-i18n="noTrackSelected">No track selected</strong>
+          <strong id="now-title-wrap"><span id="now-title" data-i18n="noTrackSelected">No track selected</span></strong>
           <span id="now-detail"><span id="now-artist">—</span></span>
         </div>
         <button id="now-playlist-button" class="now-playlist-button" data-i18n-aria="addCurrentToPlaylist" data-i18n-title="addToPlaylist" aria-label="Add current track to a playlist" title="Add to playlist" disabled><svg class="control-icon" aria-hidden="true"><use href="#icon-plus" /></svg></button>

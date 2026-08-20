@@ -1,6 +1,6 @@
 # Flac Cast vX.Y.Z
 
-Flac Cast is a local-first FLAC player with Google Cast support. This release contains native downloads for Windows, macOS, and Linux built from tag `vX.Y.Z`.
+Flac Cast is a local-first high-resolution audio player with Google Cast support. This release contains native downloads for Windows, macOS, and Linux built from tag `vX.Y.Z`.
 
 ## Downloads
 

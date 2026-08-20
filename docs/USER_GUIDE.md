@@ -8,7 +8,7 @@ Open **About**, the final library tab, to see the installed version, project cre
 
 Flac Cast opens in English by default. Use the language selector in the header to switch between English and Spanish. The choice is saved for future launches.
 
-Select **Libraries**, then **Add folder**, and choose a folder containing FLAC files. Repeat this process to combine multiple local, mapped-drive, UNC, or NAS locations into one library.
+Select **Libraries**, then **Add folder**, and choose a folder containing supported audio files. Repeat this process to combine multiple local, mapped-drive, UNC, or NAS locations into one library.
 
 The application first displays its saved index and then verifies each folder in the background. A temporarily unavailable NAS does not erase its cached tracks.
 
@@ -16,9 +16,9 @@ The application first displays its saved index and then verifies each folder in 
 
 The Libraries side panel lists every configured root. Removing a root removes it from Flac Cast and its metadata index; it does not delete music files.
 
-The refresh button in the library toolbar starts an immediate incremental scan of every configured folder. Use it when a NAS or file-system watcher has not reported a newly added, changed, or removed track yet. Unchanged files keep their cached metadata, so a manual refresh does not reread every FLAC file.
+The refresh button in the library toolbar starts an immediate incremental scan of every configured folder. Use it when a NAS or file-system watcher has not reported a newly added, changed, or removed track yet. Unchanged files keep their cached metadata, so a manual refresh does not reread every audio file.
 
-Flac Cast scans recursively. It indexes `.flac` files and reads:
+Flac Cast scans recursively. It indexes `.flac`, `.wav`, `.wave`, `.mp3`, `.m4a`, `.alac`, `.aac`, `.ogg`, `.oga`, `.opus`, `.aif`, and `.aiff` files and reads:
 
 - title, artist, and album;
 - duration;
@@ -32,11 +32,7 @@ If embedded artwork is absent, it looks for `cover`, `folder`, `front`, or `albu
 
 ### Tracks
 
-The Tracks tab displays every track with artwork, title, artist, album, technical quality, and duration. Use the sort selector for:
-
-- artist A–Z;
-- track title A–Z;
-- highest technical quality.
+The Tracks tab displays every track with artwork, title, artist, album, technical quality, and duration. The first selector chooses artist, track title, album, or technical quality. The independent Order selector chooses A–Z/Z–A for textual fields or low-to-high/high-to-low for quality.
 
 Quality sorting compares bit depth first, then sample rate. For example, 24-bit/44.1 kHz appears before 16-bit/96 kHz because bit depth is the primary key.
 
@@ -56,7 +52,7 @@ Playlists are stored locally. A playlist can have a custom name and square artwo
 
 Search matches track title, artist, and album. Press `Ctrl+F` to focus the search field. Selecting a search result uses the current result set as its scheduled playback context.
 
-The search index is prepared in the background from cached metadata. It does not open or decode FLAC files, and it does not need to reread a NAS library. An **Indexing…** indicator may appear briefly after launch or after a library update. New, changed, and removed tracks are synchronized incrementally.
+The search index is prepared in the background from cached metadata. It does not open or decode audio files, and it does not need to reread a NAS library. An **Indexing…** indicator may appear briefly after launch or after a library update. New, changed, and removed tracks are synchronized incrementally.
 
 Search is case-insensitive and accent-insensitive, so `beyonce` can match `Beyoncé`. Multiple words may match across title, artist, and album. Sorting is performed by the background index using the current Tracks sort option.
 
@@ -72,7 +68,7 @@ The footer provides Previous, Play/Pause, Next, Shuffle, Repeat, time, seek, and
 - **Repeat** cycles through off, album repeat, and track repeat.
 - The quality badge shows the current local file quality or effective Cast delivery quality.
 
-The now-playing artist line has a compact width and automatically scrolls when the artist list is longer than the available area.
+The now-playing title and artist lines have a compact width and scroll independently when their text is longer than the available area.
 
 The active track is highlighted in green anywhere it appears in a track list. A decorative three-bar equalizer beside its artwork animates while playback is active and remains still while paused. The animation is disabled when the operating system requests reduced motion.
 
@@ -106,6 +102,8 @@ The track menu offers:
 Open **Cast**, choose a receiver, and select a track. The PC must remain awake and reachable because it serves the media directly to the receiver. The Cast panel reports preparation, conversion, buffering, playback, receiver requests, and effective format.
 
 When Cast is started during local playback, the receiver begins at the local player's current position instead of restarting the track.
+
+Flac Cast sends a bounded receiver queue containing recent history, the current track, manually added FIFO entries, and upcoming scheduled tracks. Compatible Google Home and receiver surfaces can therefore expose Previous, Next, and repeat controls. Google decides which controls and how much queue detail each device UI displays; Flac Cast cannot force unsupported controls to appear. Shuffle is represented by the already shuffled scheduled order.
 
 See [Google Cast pipeline](CASTING.md) for detailed compatibility behavior.
 

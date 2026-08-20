@@ -7,7 +7,17 @@ import type { MediaAccess } from "../shared/contracts.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".flac": "audio/flac",
-  ".wav": "audio/wav"
+  ".wav": "audio/wav",
+  ".wave": "audio/wav",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".alac": "audio/mp4",
+  ".aac": "audio/aac",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".opus": "audio/opus",
+  ".aif": "audio/aiff",
+  ".aiff": "audio/aiff"
 };
 
 export class MediaServer {

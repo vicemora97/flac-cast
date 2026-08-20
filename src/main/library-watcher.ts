@@ -1,7 +1,10 @@
 import { watch, type FSWatcher } from "node:fs";
 import { extname } from "node:path";
 
-const RELEVANT_EXTENSIONS = new Set([".flac", ".jpg", ".jpeg", ".png", ".webp"]);
+const RELEVANT_EXTENSIONS = new Set([
+  ".flac", ".wav", ".wave", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".aif", ".aiff", ".alac",
+  ".jpg", ".jpeg", ".png", ".webp"
+]);
 
 export class LibraryWatcher {
   private readonly watchers = new Map<string, FSWatcher>();

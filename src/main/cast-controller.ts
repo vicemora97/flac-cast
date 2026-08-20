@@ -1,6 +1,6 @@
 import Bonjour = require("bonjour-service");
 import { Client, DefaultMediaReceiver, type CastMediaStatus } from "castv2-client";
-import type { CastDevice, CastState, CastTrack } from "../shared/contracts.js";
+import type { CastDevice, CastQueueRequest, CastState, CastTrack } from "../shared/contracts.js";
 
 type KnownDevice = CastDevice & { host: string; lastSeen: number };
 type LosslessFallback = (track: CastTrack, targetBits: 16 | 24) => Promise<string>;
@@ -17,6 +17,9 @@ export class CastController {
   private state: CastState = { connected: false };
   private stateUpdatedAt = Date.now();
   private volumeRefresh?: Promise<void>;
+  private lastLoadedContent?: { contentId: string; contentType: string };
+  private recoveryInProgress = false;
+  private queueAllowed = true;
 
   constructor(
     private readonly prepareFlac: FlacPreparer,
@@ -125,40 +128,50 @@ export class CastController {
     if (!track.castUrl) throw new Error("No hay una dirección de red local disponible para esta pista");
     const requestedStartTime = Number.isFinite(startTimeSeconds) ? startTimeSeconds : 0;
     const startTime = Math.max(0, Math.min(track.durationSeconds ?? Number.POSITIVE_INFINITY, requestedStartTime));
+    const recoveryDeviceId = this.state.deviceId;
 
-    const metadata: Record<string, unknown> = {
-      metadataType: 3,
-      title: track.title,
-      artist: track.artist,
-      albumName: track.album,
-      albumArtist: track.albumArtist || track.artist
-    };
-    if (isPositiveInteger(track.trackNumber)) metadata.trackNumber = track.trackNumber;
-    if (isPositiveInteger(track.discNumber)) metadata.discNumber = track.discNumber;
-    if (track.castArtworkUrl) metadata.images = [{ url: track.castArtworkUrl }];
+    const metadata = createMetadata(track);
 
     this.state = {
       ...this.state,
       playerState: "BUFFERING",
       idleReason: undefined,
       error: undefined,
-      deliveryMode: "flac-cached",
+      deliveryMode: isFlac(track) ? "flac-cached" : "original",
       deliveryBits: track.bitsPerSample,
       deliveryPhase: "preparing",
       currentTime: startTime,
-      duration: track.durationSeconds
+      duration: track.durationSeconds,
+      currentTrackId: track.id,
+      queueActive: false
     };
 
-    try {
-      const prepared = await this.prepareFlac(track);
-      const deliveryMode = prepared.repacked ? "flac-repacked" : "flac-cached";
-      for (const contentType of ["audio/flac", "audio/x-flac"]) {
-        if (await this.tryLoad(prepared.url, contentType, track.durationSeconds, metadata, deliveryMode, 4_000, 1_500, startTime)) {
-          return this.getState();
-        }
+    let directUrl = track.castUrl;
+    let directTypes = directContentTypes(track);
+    let directMode: CastState["deliveryMode"] = "original";
+    if (isFlac(track)) {
+      try {
+        const prepared = await this.prepareFlac(track);
+        directUrl = prepared.url;
+        directTypes = ["audio/flac", "audio/x-flac"];
+        directMode = prepared.repacked ? "flac-repacked" : "flac-cached";
+      } catch (error) {
+        console.warn(`[cast] direct preparation failed for "${track.title}"`, error);
       }
-    } catch (error) {
-      console.warn(`No se pudo preparar el FLAC directo de ${track.title}`, error);
+    }
+
+    if (await this.tryDirectCandidates(track, directUrl, directTypes, metadata, directMode, startTime, "initial")) {
+      return this.getState();
+    }
+
+    // A stale Default Media Receiver session can answer with a media error even
+    // when the exact same file is valid after reconnecting. Recover once and
+    // retry the original URL (with a cache-busting query) before transcoding.
+    if (await this.recoverCurrentDevice(`direct playback failed for ${track.id}`, recoveryDeviceId)) {
+      const retryUrl = appendRetryToken(directUrl);
+      if (await this.tryDirectCandidates(track, retryUrl, directTypes, metadata, directMode, startTime, "recovered")) {
+        return this.getState();
+      }
     }
 
     this.state = {
@@ -167,7 +180,7 @@ export class CastController {
       idleReason: undefined,
       error: undefined,
       deliveryMode: "wav-lossless",
-      deliveryBits: track.bitsPerSample && track.bitsPerSample <= 16 ? 16 : 24,
+      deliveryBits: track.bitsPerSample && track.bitsPerSample > 16 ? 24 : 16,
       deliveryPhase: "converting",
       currentTime: startTime,
       duration: track.durationSeconds
@@ -180,7 +193,72 @@ export class CastController {
       }
     }
     this.state = { ...this.state, deliveryPhase: "failed" };
-    throw new Error("La barra rechazó tanto el FLAC preparado como el WAV PCM lossless");
+    throw new Error("The receiver rejected both the original audio and the lossless WAV fallback");
+  }
+
+  async castQueue(request: CastQueueRequest): Promise<CastState> {
+    const tracks = request.tracks.slice(0, 40);
+    if (tracks.length === 0) throw new Error("The Cast queue is empty");
+    const currentIndex = Math.max(0, Math.min(tracks.length - 1, request.currentIndex));
+    const current = tracks[currentIndex]!;
+    if (!this.queueAllowed) return this.castTrack(current, request.startTimeSeconds ?? 0);
+    if (!this.player || !this.state.connected) throw new Error("Primero selecciona un dispositivo Chromecast");
+    if (!current.castUrl) throw new Error("No hay una dirección de red local disponible para esta pista");
+    const recoveryDeviceId = this.state.deviceId;
+    const requestedStartTime = Number.isFinite(request.startTimeSeconds) ? request.startTimeSeconds ?? 0 : 0;
+    const startTime = Math.max(0, Math.min(current.durationSeconds ?? Number.POSITIVE_INFINITY, requestedStartTime));
+
+    let contentId = current.castUrl;
+    let contentType = directContentTypes(current)[0] ?? "application/octet-stream";
+    let deliveryMode: NonNullable<CastState["deliveryMode"]> = "original";
+    this.state = {
+      ...this.state,
+      playerState: "BUFFERING",
+      idleReason: undefined,
+      error: undefined,
+      deliveryMode: isFlac(current) ? "flac-cached" : "original",
+      deliveryBits: current.bitsPerSample,
+      deliveryPhase: "preparing",
+      currentTime: startTime,
+      duration: current.durationSeconds,
+      currentTrackId: current.id,
+      queueActive: false
+    };
+
+    if (isFlac(current)) {
+      try {
+        const prepared = await this.prepareFlac(current);
+        contentId = prepared.url;
+        contentType = "audio/flac";
+        deliveryMode = prepared.repacked ? "flac-repacked" : "flac-cached";
+      } catch (error) {
+        console.warn(`[cast] queue preparation failed for "${current.title}"; using original URL`, error);
+      }
+    }
+
+    if (await this.tryQueueLoad(tracks, currentIndex, contentId, contentType, deliveryMode, request, startTime)) {
+      return this.getState();
+    }
+
+    // A valid queue can be rejected by a stale Default Media Receiver session.
+    // Rebuild that session once and retry the exact queue before degrading to
+    // single-item playback. The retry token prevents a stale media response
+    // from being reused while leaving every later queue item unchanged.
+    if (await this.recoverCurrentDevice(`queue playback failed for ${current.id}`, recoveryDeviceId)) {
+      const retryContentId = appendRetryToken(contentId);
+      if (await this.tryQueueLoad(tracks, currentIndex, retryContentId, contentType, deliveryMode, request, startTime)) {
+        return this.getState();
+      }
+    }
+
+    // QUEUE_LOAD is optional compatibility surface. If the receiver rejects it,
+    // switch to the proven single-item pipeline only after the bounded recovery
+    // attempt. This prevents both false capability negatives and retry loops.
+    console.warn("[cast] queueLoad failed after session recovery; switching this connection to single-item playback");
+    const restored = await this.castTrack(current, startTime);
+    this.queueAllowed = false;
+    this.state = { ...restored, queueActive: false };
+    return this.getState();
   }
 
   async command(command: "play" | "pause"): Promise<CastState> {
@@ -226,6 +304,8 @@ export class CastController {
     const player = this.player;
     this.client = undefined;
     this.player = undefined;
+    this.lastLoadedContent = undefined;
+    this.queueAllowed = true;
 
     if (client && player && stopReceiver) {
       await new Promise<void>((resolve) => {
@@ -269,7 +349,11 @@ export class CastController {
       playerState: status.playerState ?? this.state.playerState,
       idleReason: status.idleReason,
       currentTime: status.currentTime ?? this.state.currentTime,
-      duration: status.media?.duration ?? this.state.duration
+      duration: status.media?.duration ?? this.state.duration,
+      currentTrackId: status.media?.customData?.trackId ?? this.state.currentTrackId,
+      repeatMode: status.repeatMode === "REPEAT_SINGLE" ? "single"
+        : status.repeatMode === "REPEAT_ALL" || status.repeatMode === "REPEAT_ALL_AND_SHUFFLE" ? "all"
+          : status.repeatMode === "REPEAT_OFF" ? "off" : this.state.repeatMode
     };
     this.stateUpdatedAt = Date.now();
     this.applyReceiverStatus({ volume: status.volume });
@@ -305,6 +389,7 @@ export class CastController {
   private handleSessionClosed(player: DefaultMediaReceiver): void {
     if (this.player !== player) return;
     this.player = undefined;
+    this.lastLoadedContent = undefined;
     const client = this.client;
     this.client = undefined;
     try { client?.close(); } catch { /* El canal ya estaba cerrado. */ }
@@ -318,8 +403,74 @@ export class CastController {
     const client = this.client;
     this.client = undefined;
     this.player = undefined;
+    this.lastLoadedContent = undefined;
     try { client?.close(); } catch { /* El socket ya estaba cerrado. */ }
     this.state = { connected: false, error: message };
+  }
+
+  private async tryQueueLoad(
+    tracks: CastTrack[],
+    currentIndex: number,
+    currentContentId: string,
+    currentContentType: string,
+    deliveryMode: NonNullable<CastState["deliveryMode"]>,
+    request: CastQueueRequest,
+    startTime: number
+  ): Promise<boolean> {
+    if (!this.player) return false;
+    const items: Array<Record<string, unknown>> = [];
+    let startIndex = -1;
+    tracks.forEach((track, index) => {
+      const active = index === currentIndex;
+      const contentId = active ? currentContentId : track.castUrl;
+      if (!contentId) return;
+      if (active) startIndex = items.length;
+      items.push({
+        media: {
+          contentId,
+          contentType: active ? currentContentType : directContentTypes(track)[0] ?? "application/octet-stream",
+          streamType: "BUFFERED",
+          duration: track.durationSeconds,
+          metadata: createMetadata(track),
+          customData: { trackId: track.id }
+        },
+        autoplay: true,
+        startTime: active ? startTime : 0,
+        preloadTime: index > currentIndex && index <= currentIndex + 2 ? 8 : 0
+      });
+    });
+    if (startIndex < 0 || items.length === 0) return false;
+
+    this.state = {
+      ...this.state,
+      playerState: "BUFFERING",
+      idleReason: undefined,
+      error: undefined,
+      deliveryMode,
+      deliveryPhase: "loading",
+      currentTime: startTime,
+      queueActive: false
+    };
+    try {
+      const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+        this.player!.queueLoad(items, {
+          startIndex,
+          currentTime: startTime,
+          repeatMode: castRepeatMode(request.repeatMode)
+        }, (error, result) => error ? reject(error) : resolve(result ?? {}));
+      }), 8_000, "Chromecast did not accept the playback queue");
+      this.applyStatus(status);
+      if (status.playerState === "IDLE" && status.idleReason === "ERROR") return false;
+      const playing = status.playerState === "PLAYING" || await this.waitForPlaybackOutcome(4_000);
+      const stable = playing && await this.confirmPlaybackStability(1_200);
+      if (!stable) return false;
+      this.lastLoadedContent = { contentId: currentContentId, contentType: currentContentType };
+      this.state = { ...this.state, queueActive: true };
+      return true;
+    } catch (error) {
+      console.warn(`[cast] queueLoad failed (${currentContentType})`, error);
+      return false;
+    }
   }
 
   private async tryLoad(
@@ -327,7 +478,7 @@ export class CastController {
     contentType: string,
     duration: number | undefined,
     metadata: Record<string, unknown>,
-    deliveryMode: "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless",
+    deliveryMode: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless",
     waitMilliseconds = 4_000,
     stabilityMilliseconds = 0,
     startTime = 0
@@ -352,15 +503,53 @@ export class CastController {
       }), 6_000, `Chromecast no pudo cargar ${contentType}`);
       this.applyStatus(status);
       if (status.playerState === "PLAYING") {
-        return stabilityMilliseconds > 0 ? this.confirmPlaybackStability(stabilityMilliseconds) : true;
+        const stable = stabilityMilliseconds > 0 ? await this.confirmPlaybackStability(stabilityMilliseconds) : true;
+        if (stable) this.lastLoadedContent = { contentId, contentType };
+        return stable;
       }
       if (status.playerState === "IDLE" && status.idleReason === "ERROR") return false;
       const playing = await this.waitForPlaybackOutcome(waitMilliseconds);
-      return playing && stabilityMilliseconds > 0
-        ? this.confirmPlaybackStability(stabilityMilliseconds)
+      const stable = playing && stabilityMilliseconds > 0
+        ? await this.confirmPlaybackStability(stabilityMilliseconds)
         : playing;
-    } catch {
+      if (stable) this.lastLoadedContent = { contentId, contentType };
+      return stable;
+    } catch (error) {
+      console.warn(`[cast] load failed (${contentType})`, error);
       return false;
+    }
+  }
+
+  private async tryDirectCandidates(
+    track: CastTrack,
+    url: string,
+    contentTypes: string[],
+    metadata: Record<string, unknown>,
+    deliveryMode: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless",
+    startTime: number,
+    attempt: string
+  ): Promise<boolean> {
+    for (const contentType of contentTypes) {
+      const loaded = await this.tryLoad(url, contentType, track.durationSeconds, metadata, deliveryMode, 4_000, 1_200, startTime);
+      console.info(`[cast] ${attempt} ${contentType} for ${track.id}: ${loaded ? "playing" : "rejected"}`);
+      if (loaded) return true;
+    }
+    return false;
+  }
+
+  private async recoverCurrentDevice(reason: string, deviceId = this.state.deviceId): Promise<boolean> {
+    if (this.recoveryInProgress || !deviceId) return false;
+    this.recoveryInProgress = true;
+    console.warn(`[cast] recovering receiver session: ${reason}`);
+    try {
+      await this.disconnect(true);
+      await this.connect(deviceId);
+      return true;
+    } catch (error) {
+      console.warn("[cast] automatic session recovery failed", error);
+      return false;
+    } finally {
+      this.recoveryInProgress = false;
     }
   }
 
@@ -420,6 +609,46 @@ function textValue(value: unknown): string | undefined {
 
 function isPositiveInteger(value: number | undefined): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isFlac(track: CastTrack): boolean {
+  return track.fileExtension?.toLowerCase() === ".flac" || track.contentType?.toLowerCase().includes("flac") === true;
+}
+
+function directContentTypes(track: CastTrack): string[] {
+  const primary = track.contentType || "application/octet-stream";
+  if (isFlac(track)) return ["audio/flac", "audio/x-flac"];
+  if (primary === "audio/wav") return ["audio/wav", "audio/x-wav"];
+  if (primary === "audio/opus") return ["audio/opus", "audio/ogg"];
+  return [primary];
+}
+
+function createMetadata(track: CastTrack): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    metadataType: 3,
+    title: track.title,
+    artist: track.artist,
+    albumName: track.album,
+    albumArtist: track.albumArtist || track.artist
+  };
+  if (isPositiveInteger(track.trackNumber)) metadata.trackNumber = track.trackNumber;
+  if (isPositiveInteger(track.discNumber)) metadata.discNumber = track.discNumber;
+  if (track.castArtworkUrl) metadata.images = [{ url: track.castArtworkUrl }];
+  return metadata;
+}
+
+function appendRetryToken(sourceUrl: string): string {
+  try {
+    const url = new URL(sourceUrl);
+    url.searchParams.set("castRetry", Date.now().toString(36));
+    return url.toString();
+  } catch {
+    return sourceUrl;
+  }
+}
+
+function castRepeatMode(mode: CastQueueRequest["repeatMode"]): string {
+  return mode === "single" ? "REPEAT_SINGLE" : mode === "all" ? "REPEAT_ALL" : "REPEAT_OFF";
 }
 
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {

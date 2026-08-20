@@ -4,6 +4,29 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-08-20
+
+### Added
+
+- Added WAV, MP3, M4A/ALAC, AAC, Ogg Vorbis, Opus, AIFF, and AIF library indexing and playback alongside FLAC.
+- Added album sorting and an independent ascending/descending order selector for text and quality sorts.
+- Added a real bounded Google Cast queue so compatible Google Home surfaces can expose receiver-side Previous, Next, and repeat controls.
+- Added automatic local WAV preparation when Chromium cannot decode a supported source container directly.
+
+### Changed
+
+- Long now-playing track titles scroll independently using the same slow marquee behavior as long artist lists.
+- Cast queues preserve the manual FIFO priority layer and include recent history for receiver-side Previous.
+- Search-index sorting now follows both the selected criterion and direction.
+
+### Fixed
+
+- Added one-shot Cast session recovery and cache-busted direct-audio retry before WAV fallback when a stale receiver session rejects an otherwise valid file.
+- Added one-shot receiver-session recovery and a cache-busted `QUEUE_LOAD` retry before disabling remote queue controls for the connection.
+- Added automatic recovery when a queued item fails after a receiver-side transition, while preventing retry loops.
+- Restored verified single-track playback when a receiver rejects `QUEUE_LOAD`, preventing optional remote queue support from breaking Cast startup.
+- Removed the successful `LOAD` followed by `QUEUE_LOAD` sequence that audibly restarted every Cast track after roughly one second.
+
 ## [1.0.3] - 2026-08-18
 
 ### Added
@@ -62,6 +85,7 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
+[1.0.4]: https://github.com/vicemora97/flac-cast/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/vicemora97/flac-cast/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/vicemora97/flac-cast/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/vicemora97/flac-cast/compare/v1.0.0...v1.0.1

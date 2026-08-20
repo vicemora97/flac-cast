@@ -30,7 +30,7 @@ workerScope.onmessage = (event) => {
   }
   const matches = [...records.values()].filter((track) => terms.every((term) => track.searchText.includes(term)));
   const collator = new Intl.Collator(message.language, { sensitivity: "base", numeric: true });
-  matches.sort(createComparator(message.sort, collator));
+  matches.sort(createComparator(message.sort, message.direction, collator));
   workerScope.postMessage({
     type: "results",
     requestId: message.requestId,
@@ -61,19 +61,26 @@ function normalizeSearchText(value: string): string {
     .trim();
 }
 
-function createComparator(sort: "artist" | "title" | "quality", collator: Intl.Collator): (left: IndexedTrack, right: IndexedTrack) => number {
+function createComparator(sort: "artist" | "title" | "album" | "quality", direction: "asc" | "desc", collator: Intl.Collator): (left: IndexedTrack, right: IndexedTrack) => number {
   const byArtist = (left: IndexedTrack, right: IndexedTrack) => collator.compare(left.artist, right.artist)
     || collator.compare(left.title, right.title)
     || collator.compare(left.album, right.album);
-  if (sort === "quality") {
-    return (left, right) => (right.bitsPerSample ?? 0) - (left.bitsPerSample ?? 0)
-      || (right.sampleRate ?? 0) - (left.sampleRate ?? 0)
-      || byArtist(left, right);
-  }
-  if (sort === "title") {
-    return (left, right) => collator.compare(left.title, right.title)
+  const comparator = sort === "quality"
+    ? (left: IndexedTrack, right: IndexedTrack) => {
+      const quality = (left.bitsPerSample ?? 0) - (right.bitsPerSample ?? 0)
+      || (left.sampleRate ?? 0) - (right.sampleRate ?? 0)
+      || (left.bitrate ?? 0) - (right.bitrate ?? 0);
+      return (direction === "desc" ? -quality : quality) || byArtist(left, right);
+    }
+    : sort === "title"
+      ? (left: IndexedTrack, right: IndexedTrack) => collator.compare(left.title, right.title)
       || collator.compare(left.artist, right.artist)
-      || collator.compare(left.album, right.album);
-  }
-  return byArtist;
+      || collator.compare(left.album, right.album)
+      : sort === "album"
+        ? (left: IndexedTrack, right: IndexedTrack) => collator.compare(left.album, right.album)
+          || collator.compare(left.artist, right.artist)
+          || collator.compare(left.title, right.title)
+        : byArtist;
+  const factor = direction === "desc" ? -1 : 1;
+  return (left, right) => sort === "quality" ? comparator(left, right) : factor * comparator(left, right);
 }

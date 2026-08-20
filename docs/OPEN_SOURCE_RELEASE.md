@@ -57,7 +57,7 @@ Read the current [SignPath Foundation conditions](https://signpath.org/terms.htm
 - **Build system:** GitHub Actions on GitHub-hosted Windows runners
 - **Artifact to sign:** the Windows x64 application/installer produced by `npm run make:win`
 
-Explain that Flac Cast is a local-first Electron music player; it reads user-selected FLAC folders, can stream to a user-selected Google Cast receiver, queries LRCLIB only after the user presses Lyrics, has no telemetry, and invokes the upstream open-source FFmpeg executable for compatibility conversion.
+Explain that Flac Cast is a local-first Electron music player; it reads user-selected audio folders, can stream to a user-selected Google Cast receiver, queries LRCLIB only after the user presses Lyrics, has no telemetry, and invokes the upstream open-source FFmpeg executable for compatibility conversion.
 
 Do not claim that acceptance is guaranteed. SignPath Foundation evaluates project reputation, activity, documentation, ownership, security, and policy compliance at its discretion.
 

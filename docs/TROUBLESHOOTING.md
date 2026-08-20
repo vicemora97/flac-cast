@@ -20,13 +20,13 @@ The cached index should remain visible when a configured NAS is offline.
 
 ## New tracks do not appear
 
-Flac Cast watches `.flac` and artwork changes recursively and also scans every ten minutes. Some NAS devices do not emit reliable change notifications. Bring the app to the foreground, wait for the consistency refresh, or restart the current development build.
+Flac Cast watches every supported audio extension and artwork changes recursively and also scans every ten minutes. Some NAS devices do not emit reliable change notifications. Bring the app to the foreground, wait for the consistency refresh, or restart the current development build.
 
-Only `.flac` audio files are currently indexed.
+Supported extensions are FLAC, WAV/WAVE, MP3, M4A/ALAC, AAC, OGG/OGA, Opus, AIF, and AIFF.
 
 ## Library refresh is slow
 
-The first scan reads metadata and artwork for every FLAC. Later scans compare path, size, and modification time and reuse cached records. NAS latency, antivirus inspection, very large artwork, and directories containing many files can increase scan time.
+The first scan reads metadata and artwork for every supported audio file. Later scans compare path, size, and modification time and reuse cached records. NAS latency, antivirus inspection, very large artwork, and directories containing many files can increase scan time.
 
 ## Local playback works but Cast devices do not appear
 
@@ -52,7 +52,11 @@ The Cast panel may show whether the receiver reached the PC and whether it reque
 
 ## Direct FLAC is rejected
 
-Flac Cast retries with an alternate FLAC MIME type, a sanitized FLAC container, and a WAV PCM fallback. Published Google Cast codec capabilities do not guarantee identical support in every third-party receiver implementation.
+Flac Cast retries with an alternate FLAC MIME type, a sanitized FLAC container, a fresh receiver session and URL, and finally a WAV PCM fallback. Published Google Cast codec capabilities do not guarantee identical support in every third-party receiver implementation.
+
+## A track sometimes fails but works after reconnecting
+
+Version 1.0.4 automatically treats the first rejection as potentially transient. It records the failed MIME attempt, rebuilds the Default Media Receiver session once, retries the original audio with a cache-busting URL while preserving position and queue, and only then converts to WAV. Initial `QUEUE_LOAD` startup and a queued item that fails during a receiver-side transition each receive one bounded session-recovery attempt. Retries are keyed or locally bounded so a persistently incompatible file cannot create an infinite loop.
 
 Inspect the footer quality badge and Cast panel to identify the selected delivery mode.
 

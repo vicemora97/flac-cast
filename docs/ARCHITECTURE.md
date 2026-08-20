@@ -5,7 +5,7 @@
 Flac Cast is an Electron application written in TypeScript. It separates privileged desktop work from UI work using Electron's main process, a context-isolated preload bridge, and a sandboxed renderer.
 
 ```text
-Selected FLAC libraries
+Selected audio libraries
         |
         v
   LibraryManager ----> persistent library index and artwork cache
@@ -58,19 +58,19 @@ The renderer is context-isolated, has Node integration disabled, and runs with E
 
 ### Background search index
 
-`src/renderer/search-worker.ts` owns a compact, in-memory index containing only each track ID, title, artist, album, bit depth, and sample rate. Text is normalized once when a track is added or changed: Unicode accents are removed, case is folded, and punctuation becomes spaces. Searches therefore avoid repeatedly normalizing the full library on the renderer thread.
+`src/renderer/search-worker.ts` owns a compact, in-memory index containing only each track ID, title, artist, album, bit depth, sample rate, and bitrate. Text is normalized once when a track is added or changed: Unicode accents are removed, case is folded, and punctuation becomes spaces. Searches therefore avoid repeatedly normalizing the full library on the renderer thread.
 
 The renderer sends incremental synchronization messages to the worker. Unchanged records are identified by lightweight signatures and are not resent; removed tracks are deleted explicitly. The worker filters and sorts matches away from the UI thread, then returns stable track IDs. A 90 ms input debounce avoids obsolete work while typing.
 
 Search keeps every matching ID as the playback context, but creates at most 200 track-row DOM nodes. This bounds layout and rendering cost for very large libraries without shortening the playable result queue. The status inside the search field reports the brief initial indexing phase. If Web Workers are unavailable, the renderer falls back to the previous synchronous search path so the feature remains usable.
 
-The search index is intentionally not another disk database. At launch it is rebuilt from the already persisted metadata cache, so it does not read FLAC audio or reconnect to the NAS. Its memory cost grows with short textual metadata rather than audio-file size.
+The search index is intentionally not another disk database. At launch it is rebuilt from the already persisted metadata cache, so it does not read audio files or reconnect to the NAS. Its memory cost grows with short textual metadata rather than audio-file size.
 
 ## Main modules
 
 ### LibraryManager
 
-`LibraryManager` recursively scans `.flac` files, reads metadata with `music-metadata`, and stores a cache record containing path, file size, modification time, tags, technical format data, track/disc numbers, and artwork references.
+`LibraryManager` recursively scans supported FLAC, WAV, MP3, MP4-audio, AAC, Ogg, Opus, and AIFF extensions, reads metadata with `music-metadata`, and stores a cache record containing path, file size, modification time, container MIME type, tags, technical format data, track/disc numbers, and artwork references.
 
 On refresh, unchanged files reuse their previous records. Only new or modified files are reparsed. Records from multiple libraries are normalized, deduplicated by path, and materialized as temporary HTTP URLs.
 
@@ -80,13 +80,13 @@ On refresh, unchanged files reuse their previous records. Only new or modified f
 
 ### MediaServer
 
-`MediaServer` binds an ephemeral port on all interfaces and creates a random token for each run. Only files explicitly registered in memory can be served. It supports `OPTIONS`, `HEAD`, full responses, byte ranges, CORS, FLAC/WAV MIME types, and artwork endpoints.
+`MediaServer` binds an ephemeral port on all interfaces and creates a random token for each run. Only files explicitly registered in memory can be served. It supports `OPTIONS`, `HEAD`, full responses, byte ranges, CORS, every indexed audio MIME type, and artwork endpoints.
 
 Local playback receives a `127.0.0.1` URL. Cast receives a LAN IPv4 URL. The source path is never exposed to the renderer.
 
 ### CastController
 
-`CastController` discovers `_googlecast._tcp` services through mDNS, starts the Default Media Receiver, loads media, tracks receiver state, and controls volume, seek, pause, and resume. It maintains a short-lived device list and refreshes receiver volume separately from media status.
+`CastController` discovers `_googlecast._tcp` services through mDNS, starts the Default Media Receiver, loads media and bounded receiver queues, tracks receiver state, and controls volume, seek, pause, and resume. It maintains a short-lived device list and refreshes receiver volume separately from media status. When direct playback fails, it can rebuild the receiver session once, retry the original media with a fresh URL, and only then use WAV fallback.
 
 ### LosslessTranscoder
 
@@ -124,7 +124,7 @@ Manual entries play before the next scheduled item. Playback history records bot
 
 ## Local and Cast state
 
-Local playback uses the hidden HTML audio element. Cast playback pauses local audio and uses receiver state as the authoritative clock, duration, play/pause state, and volume. The UI renders one transport at a time while keeping a single selected-track model.
+Local playback uses the hidden HTML audio element. If Chromium rejects an indexed container, the main process prepares a WAV fallback on demand and the renderer resumes through its loopback URL. Cast playback pauses local audio and uses receiver state as the authoritative clock, duration, play/pause state, volume, current queue item, and repeat state. The UI renders one transport at a time while keeping a single selected-track model.
 
 ## Localization
 

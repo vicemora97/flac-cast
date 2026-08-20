@@ -20,7 +20,8 @@ type Artist = {
 type IconName = "play" | "pause" | "cast" | "music" | "folder" | "trash" | "playlist" | "plus" | "queue" | "more" | "edit" | "x";
 type RepeatMode = "off" | "album" | "track";
 type LibraryView = "tracks" | "albums" | "artists" | "playlists" | "about";
-type TrackSort = "artist" | "title" | "quality";
+type TrackSort = "artist" | "title" | "album" | "quality";
+type SortDirection = "asc" | "desc";
 type PlaybackSource = "scheduled" | "manual";
 type PlaybackHistoryEntry = { track: Track; source: PlaybackSource; scheduledIndex: number };
 
@@ -46,6 +47,8 @@ const librarySearch = document.querySelector<HTMLInputElement>("#library-search"
 const searchIndexStatus = document.querySelector<HTMLElement>("#search-index-status")!;
 const trackSortControl = document.querySelector<HTMLElement>("#track-sort-control")!;
 const trackSortSelect = document.querySelector<HTMLSelectElement>("#track-sort")!;
+const trackOrderControl = document.querySelector<HTMLElement>("#track-order-control")!;
+const trackOrderSelect = document.querySelector<HTMLSelectElement>("#track-order")!;
 const libraryActivity = document.querySelector<HTMLElement>("#library-activity")!;
 const refreshLibraryButton = document.querySelector<HTMLButtonElement>("#refresh-library")!;
 const trackList = document.querySelector<HTMLElement>("#tracks")!;
@@ -66,6 +69,7 @@ const shuffleButton = document.querySelector<HTMLButtonElement>("#shuffle-button
 const repeatButton = document.querySelector<HTMLButtonElement>("#repeat-button")!;
 const repeatModeLabel = document.querySelector<HTMLElement>("#repeat-mode")!;
 const nowTitle = document.querySelector<HTMLElement>("#now-title")!;
+const nowTitleWrap = document.querySelector<HTMLElement>("#now-title-wrap")!;
 const nowDetail = document.querySelector<HTMLElement>("#now-detail")!;
 const nowArtist = document.querySelector<HTMLElement>("#now-artist")!;
 let nowArtwork = document.querySelector<HTMLElement>("#now-art")!;
@@ -139,8 +143,11 @@ let editingPlaylistId: string | undefined;
 let editingPlaylistArtwork: string | undefined;
 let castPrewarmTimer: ReturnType<typeof setTimeout> | undefined;
 let lastCastPrewarmSignature = "";
+let castQueueSyncTimer: ReturnType<typeof setTimeout> | undefined;
+let lastCastQueueSignature = "";
 let castRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let castRefreshInFlight = false;
+let castAutoRecoveryKey = "";
 let lastDeviceRefreshAt = 0;
 let lastTaskbarSignature = "";
 let currentLyrics: SyncedLyrics | undefined;
@@ -156,8 +163,9 @@ let searchRequestId = 0;
 let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 let searchTrackSignatures = new Map<string, string>();
 let trackSort = normalizeTrackSort(localStorage.getItem("flac-cast-track-sort"));
+let trackSortDirection = normalizeSortDirection(localStorage.getItem("flac-cast-track-sort-direction"), trackSort);
 let sessionRestored = false;
-let nowArtistMarqueeFrame: number | undefined;
+let nowPlayingMarqueeFrame: number | undefined;
 let appVersion = "";
 let toolbarScrollY = Math.max(0, window.scrollY);
 let toolbarScrollDirection = 0;
@@ -176,9 +184,19 @@ void window.hires.getAppVersion().then((version) => {
   if (getCurrentView() === "about") showAbout();
 });
 trackSortSelect.value = trackSort;
+trackOrderSelect.value = trackSortDirection;
+renderSortDirectionOptions();
 trackSortSelect.addEventListener("change", () => {
   trackSort = normalizeTrackSort(trackSortSelect.value);
   localStorage.setItem("flac-cast-track-sort", trackSort);
+  renderSortDirectionOptions();
+  if (searchQuery) showSearchResults();
+  else showTracks();
+});
+trackOrderSelect.addEventListener("change", () => {
+  trackSortDirection = normalizeSortDirection(trackOrderSelect.value, trackSort);
+  localStorage.setItem("flac-cast-track-sort-direction", trackSortDirection);
+  renderSortDirectionOptions();
   if (searchQuery) showSearchResults();
   else showTracks();
 });
@@ -362,7 +380,7 @@ document.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", () => {
   positionActiveTabIndicator();
-  scheduleNowArtistMarquee();
+  scheduleNowPlayingMarquees();
 });
 window.addEventListener("scroll", handleWindowScroll, { passive: true });
 window.addEventListener("beforeunload", () => {
@@ -534,7 +552,7 @@ function syncSearchIndex(tracks: Track[]): void {
   const nextSignatures = new Map<string, string>();
   const upsert: SearchTrackRecord[] = [];
   tracks.forEach((track) => {
-    const signature = `${track.title}\0${track.artist}\0${track.album}\0${track.bitsPerSample ?? ""}\0${track.sampleRate ?? ""}`;
+    const signature = `${track.title}\0${track.artist}\0${track.album}\0${track.bitsPerSample ?? ""}\0${track.sampleRate ?? ""}\0${track.bitrate ?? ""}`;
     nextSignatures.set(track.id, signature);
     if (searchTrackSignatures.get(track.id) !== signature) {
       upsert.push({
@@ -543,7 +561,8 @@ function syncSearchIndex(tracks: Track[]): void {
         artist: track.artist,
         album: track.album,
         bitsPerSample: track.bitsPerSample,
-        sampleRate: track.sampleRate
+        sampleRate: track.sampleRate,
+        bitrate: track.bitrate
       });
     }
   });
@@ -634,6 +653,7 @@ function showSearchResults(delay = SEARCH_DEBOUNCE_MS): void {
       requestId,
       query: searchQuery,
       sort: trackSort,
+      direction: trackSortDirection,
       language: getLanguage()
     };
     try {
@@ -661,7 +681,7 @@ function renderFallbackSearchResults(): void {
   const matches = sortTracks(libraryTracks.filter((track) => {
     const text = normalizeSearchText(`${track.title}\n${track.artist}\n${track.album}`);
     return terms.every((term) => text.includes(term));
-  }), trackSort);
+  }), trackSort, trackSortDirection);
   renderSearchMatches(matches, matches.length);
 }
 
@@ -1081,7 +1101,7 @@ function showTracks(): void {
     return;
   }
 
-  const sortedTracks = sortTracks(libraryTracks, trackSort);
+  const sortedTracks = sortTracks(libraryTracks, trackSort, trackSortDirection);
   sortedTracks.forEach((track) => {
     trackList.append(createTrackRow(track, sortedTracks));
   });
@@ -1408,6 +1428,7 @@ function formatErrorMessage(error: unknown): string {
     ["Chromecast no inició el receptor multimedia", "Chromecast did not start the media receiver"],
     ["No hay una dirección de red local disponible para esta pista", "No local network address is available for this track"],
     ["La barra rechazó tanto el FLAC preparado como el WAV PCM lossless", "The receiver rejected both the prepared FLAC and the lossless WAV PCM fallback"],
+    ["El receptor rechazó tanto el audio original como el WAV PCM lossless", "The receiver rejected both the original audio and the lossless WAV fallback"],
     ["No hay una sesión Chromecast activa", "There is no active Chromecast session"],
     ["Chromecast no respondió al consultar el volumen", "Chromecast did not respond to the volume request"],
     ["La barra cerró la sesión Cast. Vuelve a conectarla para continuar.", "The receiver closed the Cast session. Reconnect it to continue."],
@@ -1572,7 +1593,7 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
       }
       try {
         castStatus.textContent = t("sendingTrack", { title: track.title });
-        currentCastState = await window.hires.castTrack(track);
+        currentCastState = await castCurrentQueue(0);
         renderDeliveryQuality(track);
         renderCastState();
       } catch (error) {
@@ -1581,13 +1602,103 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
       return;
     }
 
-    player.src = track.localUrl;
-    player.dataset.trackId = track.id;
-    renderLocalTransport();
-    await player.play();
+    await playLocalTrack(track);
   } finally {
     trackChangeInProgress = false;
   }
+}
+
+function buildCastQueuePlan(): { tracks: Track[]; currentIndex: number } {
+  if (!selectedTrack) return { tracks: [], currentIndex: 0 };
+  const previous = repeatMode === "album" ? [] : playbackHistory.slice(-5).map((entry) => entry.track);
+  let scheduled = playbackQueue.slice(Math.max(0, queueIndex + 1));
+  if (repeatMode === "album") {
+    const anchor = currentPlaybackSource === "manual" ? playbackQueue[queueIndex] : selectedTrack;
+    if (anchor) {
+      const sameAlbum = (track: Track) => track.artist === anchor.artist && track.album === anchor.album;
+      const albumQueue = playbackQueue.filter(sameAlbum);
+      const source = albumQueue.length > 0 ? albumQueue : libraryTracks.filter(sameAlbum);
+      const anchorIndex = Math.max(0, source.findIndex((track) => track.id === anchor.id));
+      scheduled = [...source.slice(anchorIndex + 1), ...source.slice(0, anchorIndex + (currentPlaybackSource === "manual" ? 1 : 0))];
+    }
+  }
+  const upcoming = [...manualQueue, ...scheduled];
+  const available = Math.max(0, 40 - previous.length - 1);
+  return {
+    tracks: [...previous, selectedTrack, ...upcoming.slice(0, available)],
+    currentIndex: previous.length
+  };
+}
+
+function castQueueSignature(): string {
+  const plan = buildCastQueuePlan();
+  return `${currentCastState.deviceId ?? "cast"}:${repeatMode}:${plan.currentIndex}:${plan.tracks.map((track) => track.id).join("|")}`;
+}
+
+async function castCurrentQueue(startTimeSeconds = 0): Promise<CastState> {
+  const plan = buildCastQueuePlan();
+  if (plan.tracks.length === 0) throw new Error("The playback queue is empty");
+  const signature = castQueueSignature();
+  lastCastQueueSignature = signature;
+  try {
+    return await window.hires.castQueue({
+      tracks: plan.tracks,
+      currentIndex: plan.currentIndex,
+      startTimeSeconds,
+      repeatMode: repeatMode === "track" ? "single" : repeatMode === "album" ? "all" : "off"
+    });
+  } catch (error) {
+    if (lastCastQueueSignature === signature) lastCastQueueSignature = "";
+    throw error;
+  }
+}
+
+function scheduleCastQueueSync(): void {
+  if (castQueueSyncTimer) clearTimeout(castQueueSyncTimer);
+  castQueueSyncTimer = undefined;
+  if (trackChangeInProgress || !currentCastState.connected || !selectedTrack || currentCastState.deliveryPhase !== "playing"
+    || currentCastState.queueActive === false
+    || (currentCastState.playerState !== "PLAYING" && currentCastState.playerState !== "PAUSED")) return;
+  const signature = castQueueSignature();
+  if (signature === lastCastQueueSignature) return;
+  castQueueSyncTimer = setTimeout(() => {
+    castQueueSyncTimer = undefined;
+    const currentTime = currentCastState.currentTime ?? 0;
+    void castCurrentQueue(currentTime).then((state) => {
+      currentCastState = state;
+      renderCastState();
+    }).catch((error) => console.warn("Could not synchronize the Cast queue", error));
+  }, 250);
+}
+
+function adoptRemoteCastTrack(trackId: string | undefined): void {
+  if (!trackId || selectedTrack?.id === trackId) return;
+  const track = libraryTrackById.get(trackId);
+  if (!track) return;
+  if (selectedTrack) rememberCurrentForPrevious();
+  const manualIndex = manualQueue.findIndex((item) => item.id === trackId);
+  if (manualIndex >= 0) {
+    manualQueue.splice(0, manualIndex + 1);
+    currentPlaybackSource = "manual";
+  } else {
+    const scheduledIndex = playbackQueue.findIndex((item) => item.id === trackId);
+    if (scheduledIndex >= 0) {
+      queueIndex = scheduledIndex;
+      currentPlaybackSource = "scheduled";
+    }
+  }
+  selectedTrack = track;
+  autoAdvancedTrackId = undefined;
+  nowTitle.textContent = track.title;
+  setNowPlayingArtist(displayArtist(track.artist));
+  replaceArtwork(nowArtwork, track.artworkUrl);
+  nowPlaylistButton.disabled = false;
+  prepareLyricsForTrack(track);
+  renderPlaybackQuality(track);
+  renderTrackPlaybackState();
+  void applyPlayerAccent(track.artworkUrl);
+  lastCastQueueSignature = repeatMode === "album" && manualIndex >= 0 ? "" : castQueueSignature();
+  updateQueueButtons();
 }
 
 async function refreshCastDevices(): Promise<void> {
@@ -1602,6 +1713,26 @@ async function refreshCastDevices(): Promise<void> {
 async function refreshCastState(render = true): Promise<void> {
   try {
     currentCastState = await window.hires.getCastState(render);
+    adoptRemoteCastTrack(currentCastState.currentTrackId);
+    if (currentCastState.repeatMode) {
+      const remoteRepeat = currentCastState.repeatMode === "single" ? "track" : currentCastState.repeatMode === "all" ? "album" : "off";
+      if (remoteRepeat !== repeatMode) {
+        repeatMode = remoteRepeat;
+        renderShuffleAndRepeatLabels();
+      }
+    }
+    if (currentCastState.playerState === "PLAYING") castAutoRecoveryKey = "";
+    if (currentCastState.connected && currentCastState.playerState === "IDLE" && currentCastState.idleReason === "ERROR" && selectedTrack && !trackChangeInProgress) {
+      const recoveryKey = `${currentCastState.deviceId ?? "cast"}:${selectedTrack.id}`;
+      if (castAutoRecoveryKey !== recoveryKey) {
+        castAutoRecoveryKey = recoveryKey;
+        const resumeAt = currentCastState.currentTime ?? 0;
+        void castCurrentQueue(resumeAt).then((state) => {
+          currentCastState = state;
+          renderCastState();
+        }).catch((error) => console.warn("Automatic Cast recovery did not succeed", error));
+      }
+    }
     if (render) renderCastState();
     const duration = currentCastState.duration ?? selectedTrack?.durationSeconds;
     const finished = currentCastState.idleReason === "FINISHED"
@@ -1697,7 +1828,7 @@ async function connectCast(device: CastDevice, button: HTMLButtonElement): Promi
       : 0;
     player.pause();
     if (selectedTrack) {
-      currentCastState = await window.hires.castTrack(selectedTrack, localStartTime);
+      currentCastState = await castCurrentQueue(localStartTime);
       renderDeliveryQuality(selectedTrack);
     }
     renderCastState();
@@ -1741,8 +1872,13 @@ function renderCastState(): void {
     : currentCastState.playerState === "PAUSED" ? t("castPaused")
       : currentCastState.playerState === "BUFFERING" ? t("castBuffering") : t("castConnected");
   castStatus.textContent = t("castStateOnDevice", { state: stateLabel, device: currentCastState.deviceName ?? t("googleCastDevice") });
-  if (currentCastState.deliveryPhase === "failed" || (currentCastState.playerState === "IDLE" && currentCastState.idleReason === "ERROR")) {
+  if (currentCastState.queueActive === false && currentCastState.playerState === "PLAYING") {
+    castStatus.textContent = t("castQueueUnavailable", { device: currentCastState.deviceName ?? t("googleCastDevice") });
+  }
+  if (currentCastState.deliveryPhase === "failed") {
     castStatus.textContent = t("receiverRejected");
+  } else if (currentCastState.playerState === "IDLE" && currentCastState.idleReason === "ERROR") {
+    castStatus.textContent = t("recoveringCast");
   }
   castToggle.textContent = currentCastState.playerState === "PAUSED" ? t("resume") : t("pause");
   if (currentCastState.error) castStatus.textContent = formatErrorMessage(currentCastState.error);
@@ -1766,12 +1902,40 @@ async function togglePlayback(): Promise<void> {
     return;
   }
   if (player.dataset.trackId !== selectedTrack.id) {
-    player.src = selectedTrack.localUrl;
-    player.dataset.trackId = selectedTrack.id;
-    renderLocalTransport();
+    await setLocalTrackSource(selectedTrack);
   }
-  if (player.paused) await player.play();
+  if (player.paused) await playLocalTrack(selectedTrack, player.currentTime, false);
   else player.pause();
+}
+
+async function setLocalTrackSource(track: Track, sourceUrl = track.localUrl, startTime = 0): Promise<void> {
+  player.src = sourceUrl;
+  player.dataset.trackId = track.id;
+  if (startTime > 0) {
+    player.addEventListener("loadedmetadata", () => {
+      player.currentTime = Math.min(startTime, player.duration || Number.POSITIVE_INFINITY);
+    }, { once: true });
+  }
+  renderLocalTransport();
+}
+
+async function playLocalTrack(track: Track, startTime = 0, resetSource = true): Promise<void> {
+  if (resetSource || player.dataset.trackId !== track.id) await setLocalTrackSource(track, track.localUrl, startTime);
+  try {
+    await player.play();
+  } catch (error) {
+    if (!shouldPrepareLocalFallback(error) || player.dataset.trackId !== track.id) throw error;
+    const fallbackUrl = await window.hires.prepareLocalTrack(track);
+    if (selectedTrack?.id !== track.id) return;
+    await setLocalTrackSource(track, fallbackUrl, startTime);
+    await player.play();
+  }
+}
+
+function shouldPrepareLocalFallback(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "NotSupportedError") return true;
+  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+  return /not supported|demux|decode|format|media/i.test(message);
 }
 
 function renderRemoteTransport(): void {
@@ -2078,32 +2242,60 @@ function setActiveTab(tab: LibraryView): void {
   aboutTab.classList.toggle("active", tab === "about");
   viewTabs.closest(".library-toolbar")?.classList.toggle("about-active", tab === "about");
   trackSortControl.hidden = tab !== "tracks";
+  trackOrderControl.hidden = tab !== "tracks";
   positionActiveTabIndicator();
   if (changed) requestAnimationFrame(() => window.scrollTo({ top: viewScrollPositions[tab] ?? 0 }));
 }
 
 function normalizeTrackSort(value: string | null): TrackSort {
-  return value === "title" || value === "quality" ? value : "artist";
+  return value === "title" || value === "album" || value === "quality" ? value : "artist";
 }
 
-function sortTracks(tracks: Track[], sort: TrackSort): Track[] {
+function normalizeSortDirection(value: string | null, sort: TrackSort): SortDirection {
+  if (value === "asc" || value === "desc") return value;
+  return sort === "quality" ? "desc" : "asc";
+}
+
+function renderSortDirectionOptions(): void {
+  const ascending = trackOrderSelect.options[0];
+  const descending = trackOrderSelect.options[1];
+  if (!ascending || !descending) return;
+  if (trackSort === "quality") {
+    ascending.textContent = t("qualityAscending");
+    descending.textContent = t("qualityDescending");
+  } else {
+    ascending.textContent = t("orderAscending");
+    descending.textContent = t("orderDescending");
+  }
+  trackOrderSelect.value = trackSortDirection;
+}
+
+function sortTracks(tracks: Track[], sort: TrackSort, direction: SortDirection): Track[] {
   const collator = new Intl.Collator(getLanguage(), { sensitivity: "base", numeric: true });
   const byArtist = (left: Track, right: Track) => collator.compare(left.artist || "", right.artist || "")
     || collator.compare(left.title || "", right.title || "")
     || collator.compare(left.album || "", right.album || "");
-  return [...tracks].sort((left, right) => {
+  const comparator = (left: Track, right: Track): number => {
     if (sort === "quality") {
-      return (right.bitsPerSample ?? 0) - (left.bitsPerSample ?? 0)
-        || (right.sampleRate ?? 0) - (left.sampleRate ?? 0)
-        || byArtist(left, right);
+      const quality = (left.bitsPerSample ?? 0) - (right.bitsPerSample ?? 0)
+        || (left.sampleRate ?? 0) - (right.sampleRate ?? 0)
+        || (left.bitrate ?? 0) - (right.bitrate ?? 0);
+      return (direction === "desc" ? -quality : quality) || byArtist(left, right);
     }
     if (sort === "title") {
       return collator.compare(left.title || "", right.title || "")
         || collator.compare(left.artist || "", right.artist || "")
         || collator.compare(left.album || "", right.album || "");
     }
+    if (sort === "album") {
+      return collator.compare(left.album || "", right.album || "")
+        || collator.compare(left.artist || "", right.artist || "")
+        || collator.compare(left.title || "", right.title || "");
+    }
     return byArtist(left, right);
-  });
+  };
+  const factor = direction === "desc" ? -1 : 1;
+  return [...tracks].sort((left, right) => sort === "quality" ? comparator(left, right) : factor * comparator(left, right));
 }
 
 function positionActiveTabIndicator(): void {
@@ -2316,6 +2508,7 @@ function updateQueueButtons(): void {
   scheduleCastPrewarm();
   updateTaskbarControls();
   savePlaybackSession();
+  scheduleCastQueueSync();
 }
 
 type SavedPlaybackSession = {
@@ -2534,6 +2727,7 @@ function changeLanguage(language: AppLanguage): void {
   else if (lyricsViewState === "missing") renderMissingLyrics();
   else if (lyricsViewState === "error") renderLyricsMessage(t("lyricsFailed"));
   renderShuffleAndRepeatLabels();
+  renderSortDirectionOptions();
   renderPlaybackQuality();
   if (!castPanel.hidden) void refreshCastDevices();
 }
@@ -2639,6 +2833,10 @@ function createTextElement(tag: string, className: string, text: string): HTMLEl
 }
 
 function formatQuality(track: Track): string {
+  if (!track.bitsPerSample && track.bitrate) {
+    const rate = track.sampleRate ? ` / ${track.sampleRate / 1000} kHz` : "";
+    return `${Math.round(track.bitrate / 1000)} kbps${rate}`;
+  }
   const bitDepth = track.bitsPerSample ? `${track.bitsPerSample}-bit` : "— bit";
   const sampleRate = track.sampleRate ? `${track.sampleRate / 1000} kHz` : "— kHz";
   return `${bitDepth} / ${sampleRate}`;
@@ -2646,13 +2844,16 @@ function formatQuality(track: Track): string {
 
 function setNowPlayingArtist(artist?: string): void {
   nowArtist.textContent = artist?.trim() || "—";
-  scheduleNowArtistMarquee();
+  scheduleNowPlayingMarquees();
 }
 
-function scheduleNowArtistMarquee(): void {
-  if (nowArtistMarqueeFrame !== undefined) cancelAnimationFrame(nowArtistMarqueeFrame);
-  nowArtistMarqueeFrame = requestAnimationFrame(() => {
-    nowArtistMarqueeFrame = undefined;
+function scheduleNowPlayingMarquees(): void {
+  if (nowPlayingMarqueeFrame !== undefined) cancelAnimationFrame(nowPlayingMarqueeFrame);
+  nowPlayingMarqueeFrame = requestAnimationFrame(() => {
+    nowPlayingMarqueeFrame = undefined;
+    nowTitleWrap.classList.remove("marquee");
+    nowTitleWrap.style.removeProperty("--title-marquee-distance");
+    nowTitleWrap.style.removeProperty("--title-marquee-duration");
     nowDetail.classList.remove("marquee");
     nowDetail.style.removeProperty("--artist-marquee-distance");
     nowDetail.style.removeProperty("--artist-marquee-duration");
@@ -2664,12 +2865,21 @@ function scheduleNowArtistMarquee(): void {
     const copyWidth = Math.max(150, Math.min(270, Math.ceil(titleWidth || 230)));
     copy?.style.setProperty("--now-copy-width", `${copyWidth}px`);
 
+    const titleOverflow = Math.ceil(nowTitle.scrollWidth - nowTitleWrap.clientWidth);
+    if (titleOverflow > 4) {
+      nowTitleWrap.style.setProperty("--title-marquee-distance", `${titleOverflow}px`);
+      nowTitleWrap.style.setProperty("--title-marquee-duration", `${Math.max(8, 6 + titleOverflow / 24).toFixed(1)}s`);
+      void nowTitle.offsetWidth;
+      nowTitleWrap.classList.add("marquee");
+    }
+
     const overflow = Math.ceil(nowArtist.scrollWidth - nowDetail.clientWidth);
-    if (overflow <= 4) return;
-    nowDetail.style.setProperty("--artist-marquee-distance", `${overflow}px`);
-    nowDetail.style.setProperty("--artist-marquee-duration", `${Math.max(8, 6 + overflow / 24).toFixed(1)}s`);
-    void nowArtist.offsetWidth;
-    nowDetail.classList.add("marquee");
+    if (overflow > 4) {
+      nowDetail.style.setProperty("--artist-marquee-distance", `${overflow}px`);
+      nowDetail.style.setProperty("--artist-marquee-duration", `${Math.max(8, 6 + overflow / 24).toFixed(1)}s`);
+      void nowArtist.offsetWidth;
+      nowDetail.classList.add("marquee");
+    }
   });
 }
 
@@ -2690,6 +2900,7 @@ function formatEffectiveQuality(track: Track): string {
       ? Math.min(track.sampleRate, 96_000)
       : track.sampleRate
     : undefined;
+  if (!bits && track.bitrate) return `${Math.round(track.bitrate / 1000)} kbps${rate ? ` / ${rate / 1000} kHz` : ""}`;
   return `${bits ? `${bits}-bit` : "— bit"} / ${rate ? `${rate / 1000} kHz` : "— kHz"}`;
 }
 
@@ -2700,7 +2911,7 @@ function renderDeliveryQuality(track: Track): void {
       ? t("sanitizedFlac")
       : currentCastState.deliveryMode === "flac-cached"
         ? t("cachedFlac")
-        : t("originalFlac");
+        : currentCastState.deliveryMode === "original" ? t("originalAudio") : t("originalFlac");
   const quality = formatEffectiveQuality(track);
   castQuality.textContent = `${format} · ${quality}`;
   renderPlaybackQuality(track);

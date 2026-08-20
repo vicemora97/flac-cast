@@ -5,6 +5,8 @@ declare module "castv2-client" {
 
   export class DefaultMediaReceiver extends EventEmitter {
     load(media: unknown, options: { autoplay?: boolean; currentTime?: number }, callback: Callback): void;
+    queueLoad(items: unknown[], options: { repeatMode?: string; currentTime?: number; startIndex?: number }, callback: Callback<CastMediaStatus>): void;
+    queueUpdate(items: unknown[] | null, options: { currentItemId?: number; currentTime?: number; jump?: number; repeatMode?: string }, callback: Callback<CastMediaStatus>): void;
     play(callback: Callback): void;
     pause(callback: Callback): void;
     stop(callback: Callback): void;
@@ -17,7 +19,10 @@ declare module "castv2-client" {
     idleReason?: "CANCELLED" | "INTERRUPTED" | "FINISHED" | "ERROR";
     currentTime?: number;
     volume?: { level?: number; muted?: boolean };
-    media?: { duration?: number };
+    media?: { duration?: number; customData?: { trackId?: string }; metadata?: Record<string, unknown> };
+    currentItemId?: number;
+    repeatMode?: "REPEAT_OFF" | "REPEAT_ALL" | "REPEAT_SINGLE" | "REPEAT_ALL_AND_SHUFFLE";
+    supportedMediaCommands?: number;
   };
 
   export class Client extends EventEmitter {

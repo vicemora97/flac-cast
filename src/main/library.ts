@@ -18,6 +18,9 @@ type CachedTrack = {
   durationSeconds?: number;
   sampleRate?: number;
   bitsPerSample?: number;
+  bitrate?: number;
+  fileExtension?: string;
+  contentType?: string;
   trackNumber?: number;
   discNumber?: number;
   artwork?: CachedArtwork;
@@ -80,7 +83,7 @@ export class LibraryManager {
     const previous = cache.libraries.find((library) => normalizeFolderKey(library.folder) === key);
     let files: AudioFile[];
     try {
-      files = await findFlacFiles(folder);
+      files = await findAudioFiles(folder);
     } catch (error) {
       throw new LibraryUnavailableError(folder, error);
     }
@@ -125,6 +128,9 @@ export class LibraryManager {
       durationSeconds: metadata.format.duration,
       sampleRate: metadata.format.sampleRate,
       bitsPerSample: metadata.format.bitsPerSample,
+      bitrate: metadata.format.bitrate,
+      fileExtension: extname(file.filePath).toLowerCase(),
+      contentType: contentTypeForExtension(extname(file.filePath)),
       trackNumber: metadata.common.track.no ?? undefined,
       discNumber: metadata.common.disk.no ?? undefined,
       artwork: picture ? await this.persistArtwork(picture.data, picture.format) : undefined
@@ -149,6 +155,8 @@ export class LibraryManager {
       return {
         id: record.id, title: record.title, artist: record.artist, album: record.album, albumArtist: record.albumArtist,
         durationSeconds: record.durationSeconds, sampleRate: record.sampleRate, bitsPerSample: record.bitsPerSample,
+        bitrate: record.bitrate, fileExtension: record.fileExtension ?? extname(record.filePath).toLowerCase(),
+        contentType: record.contentType ?? contentTypeForExtension(extname(record.filePath)),
         trackNumber: record.trackNumber, discNumber: record.discNumber,
         artworkUrl: artwork?.localUrl, castArtworkUrl: artwork?.castUrl,
         localUrl: media.localUrl, castUrl: media.castUrl
@@ -225,17 +233,33 @@ async function findExternalArtwork(folder: string, cache: Map<string, Promise<Ar
   return lookup;
 }
 
-async function findFlacFiles(folder: string): Promise<AudioFile[]> {
+const AUDIO_EXTENSIONS = new Set([".flac", ".wav", ".wave", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".aif", ".aiff", ".alac"]);
+
+async function findAudioFiles(folder: string): Promise<AudioFile[]> {
   const result: AudioFile[] = [];
   for (const entry of await readdir(folder, { withFileTypes: true })) {
     const filePath = join(folder, entry.name);
-    if (entry.isDirectory()) result.push(...await findFlacFiles(filePath));
-    else if (entry.isFile() && extname(entry.name).toLowerCase() === ".flac") {
+    if (entry.isDirectory()) result.push(...await findAudioFiles(filePath));
+    else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       const details = await stat(filePath);
       result.push({ filePath, fileSize: details.size, modifiedMs: details.mtimeMs });
     }
   }
   return result;
+}
+
+function contentTypeForExtension(value: string): string {
+  switch (value.toLowerCase()) {
+    case ".flac": return "audio/flac";
+    case ".wav": case ".wave": return "audio/wav";
+    case ".mp3": return "audio/mpeg";
+    case ".m4a": case ".alac": return "audio/mp4";
+    case ".aac": return "audio/aac";
+    case ".ogg": case ".oga": return "audio/ogg";
+    case ".opus": return "audio/opus";
+    case ".aif": case ".aiff": return "audio/aiff";
+    default: return "application/octet-stream";
+  }
 }
 
 function sortAndDedupe(records: CachedTrack[]): CachedTrack[] {

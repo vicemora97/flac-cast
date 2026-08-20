@@ -48,7 +48,7 @@ Electron renderer storage retains:
 - playback position and volume;
 - shuffle and repeat state;
 - current view and scroll positions;
-- track-sort preference.
+- track-sort criterion and direction preferences.
 
 The interface scale is automatic and no longer has a user preference.
 
@@ -64,7 +64,7 @@ The HTTP server uses:
 - a new 192-bit random route token on every run;
 - random media IDs and hash-based artwork IDs;
 - an in-memory allowlist mapping IDs to registered files;
-- only recognized FLAC/WAV endpoints;
+- only recognized, explicitly registered audio-format endpoints;
 - no directory listing or arbitrary path query.
 
 The server binds to all interfaces because Cast receivers must reach it. A valid tokenized URL is still required. URLs become invalid after the application exits because the token and registration map are discarded.

@@ -9,7 +9,7 @@ import { CastController } from "./cast-controller.js";
 import { LosslessTranscoder } from "./lossless-transcoder.js";
 import { LyricsService } from "./lyrics.js";
 import { PreferencesStore } from "./preferences.js";
-import type { CastTrack, LibraryResult, PlaybackCommand, TaskbarPlaybackState } from "../shared/contracts.js";
+import type { CastQueueRequest, CastTrack, LibraryResult, PlaybackCommand, TaskbarPlaybackState } from "../shared/contracts.js";
 
 if (squirrelStartup) app.quit();
 app.setName("Flac Cast");
@@ -153,6 +153,8 @@ async function createWindow(): Promise<void> {
       return JSON.stringify({
         api: typeof window.hires,
         chooseLibrary: typeof window.hires?.chooseLibrary,
+        castQueue: typeof window.hires?.castQueue,
+        prepareLocalTrack: typeof window.hires?.prepareLocalTrack,
         button: Boolean(document.querySelector('#choose-folder')),
         buttonDisabled: document.querySelector('#choose-folder')?.disabled,
         languageSelector: Boolean(document.querySelector('#language')),
@@ -177,6 +179,9 @@ async function createWindow(): Promise<void> {
         searchResults,
         activityIndicator: Boolean(document.querySelector('#library-activity')),
         manualLibraryRefreshButton: Boolean(document.querySelector('#refresh-library')),
+        albumSort: Boolean(document.querySelector('#track-sort option[value="album"]')),
+        orderSelector: Boolean(document.querySelector('#track-order')),
+        titleMarqueeContainer: Boolean(document.querySelector('#now-title-wrap #now-title')),
         customTransport: Boolean(document.querySelector('#local-player .timeline')),
         transportAligned: Math.max(...centers) - Math.min(...centers) < 1,
         tabIndicatorWidth: getComputedStyle(document.querySelector('.view-tabs')).getPropertyValue('--tab-pill-width'),
@@ -328,6 +333,15 @@ ipcMain.handle("cast:track", (_event, track: CastTrack, startTimeSeconds?: numbe
   };
   return castController.castTrack(routedTrack, startTimeSeconds);
 });
+ipcMain.handle("cast:queue", (_event, request: CastQueueRequest) => {
+  const receiverHost = castController.getReceiverHost();
+  const tracks = request.tracks.map((track) => ({
+    ...track,
+    castUrl: mediaServer.routeForReceiver(track.castUrl, receiverHost),
+    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
+  }));
+  return castController.castQueue({ ...request, tracks });
+});
 ipcMain.handle("cast:command", (_event, command: "play" | "pause") => castController.command(command));
 ipcMain.handle("cast:seek", (_event, seconds: number) => castController.seek(seconds));
 ipcMain.handle("cast:volume", (_event, level: number) => castController.setVolume(level));
@@ -342,13 +356,20 @@ ipcMain.handle("cast:prewarm", async (_event, tracks: CastTrack[]): Promise<numb
     const sourcePath = mediaServer.resolveFile(track.castUrl);
     if (!sourcePath) continue;
     try {
-      await transcoder.prepareFlac(sourcePath);
+      if (track.fileExtension === ".flac" || track.contentType?.includes("flac")) await transcoder.prepareFlac(sourcePath);
       prepared += 1;
     } catch (error) {
       console.warn(`No se pudo precalentar ${track.title}`, error);
     }
   }
   return prepared;
+});
+ipcMain.handle("local:prepare-track", async (_event, track: CastTrack): Promise<string> => {
+  const sourcePath = mediaServer.resolveFile(track.localUrl);
+  if (!sourcePath) throw new Error("The local source file could not be resolved");
+  const targetBits = track.bitsPerSample && track.bitsPerSample > 16 ? 24 : 16;
+  const wavPath = await transcoder.toWav(sourcePath, targetBits, track.sampleRate);
+  return mediaServer.register(wavPath).localUrl;
 });
 ipcMain.handle("cast:disconnect", () => {
   castPrewarmGeneration += 1;

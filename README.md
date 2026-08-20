@@ -3,23 +3,23 @@
 [![License: GPL v3 or later](https://img.shields.io/badge/License-GPL_v3_or_later-blue.svg)](LICENSE)
 [![CI](https://github.com/vicemora97/flac-cast/actions/workflows/ci.yml/badge.svg)](https://github.com/vicemora97/flac-cast/actions/workflows/ci.yml)
 
-Flac Cast is a desktop music player for local and network-hosted FLAC libraries. It plays music locally, browses metadata and artwork, manages playlists and queues, and streams lossless audio to Google Cast receivers over the local network.
+Flac Cast is a desktop music player for local and network-hosted audio libraries. It plays music locally, browses metadata and artwork, manages playlists and queues, and streams audio to Google Cast receivers over the local network.
 
 The application does not upload music to a cloud service. Local playback uses a loopback HTTP endpoint, while Cast receivers read an ephemeral LAN URL served directly by the PC.
 
 ## Highlights
 
 - Multiple local, mapped-drive, UNC, and NAS library folders.
-- Recursive FLAC indexing with an incremental metadata cache.
+- Recursive FLAC, WAV, MP3, M4A/ALAC, AAC, Ogg, Opus, and AIFF indexing with an incremental metadata cache.
 - Embedded artwork plus `cover`, `folder`, `front`, and `album` sidecar artwork.
 - Track, album, artist, playlist, and search views.
-- Artist, title, and audio-quality sorting.
+- Artist, title, album, and audio-quality sorting with an independent ascending/descending order.
 - Local playback with previous, next, shuffle, album repeat, and track repeat.
 - A FIFO manually-added queue layered above the scheduled playback queue.
 - Synced lyrics through LRCLIB, with instrumental-track detection and an official LRCGET contribution path when a match is missing.
 - English default interface and an English/Spanish language selector.
-- Google Cast discovery, playback, seeking, pause/resume, and synchronized volume.
-- Direct FLAC delivery with lossless FLAC repacking and WAV PCM fallback.
+- Google Cast discovery, receiver queueing, playback, seeking, pause/resume, repeat, and synchronized volume.
+- Direct source-format delivery with lossless FLAC repacking and WAV PCM fallback.
 - Disk prewarming for the next five Cast tracks.
 - Global media keys and a notification-area/menu-bar tray, plus Windows taskbar thumbnail controls.
 - Automatic library watching with a periodic NAS-safe consistency scan.
@@ -30,7 +30,7 @@ The application does not upload music to a cloud service. Local playback uses a 
 
 - Windows 10 or Windows 11, x64; macOS 12 or later on Apple silicon for the current macOS package; or a modern x64 Linux desktop for the AppImage.
 - Node.js and npm for development.
-- A local or network-accessible FLAC library.
+- A local or network-accessible library containing supported audio files.
 - Computer and Cast receiver on the same LAN for casting.
 - Private-network firewall access for Electron when using Cast.
 
@@ -111,7 +111,7 @@ Free code signing provided by [SignPath.io](https://signpath.io/), certificate b
 
 ## Current audio limitations
 
-Local playback uses Chromium's normal operating-system audio path, so it is not currently exclusive-mode or guaranteed bit-perfect. On Windows, it does not use WASAPI exclusive mode. Cast delivery is lossless, but the effective format depends on receiver support: direct FLAC is preferred, sanitized FLAC is attempted when needed, and WAV PCM is the final compatibility fallback. Sample rates above 96 kHz are reduced to 96 kHz only for the WAV fallback.
+Local playback uses Chromium's normal operating-system audio path, so it is not currently exclusive-mode or guaranteed bit-perfect. On Windows, it does not use WASAPI exclusive mode. Cast prefers the original source format; FLAC can be sanitized without re-encoding, and WAV PCM is the final compatibility fallback. Lossy inputs remain lossy even when wrapped in WAV. Sample rates above 96 kHz are reduced to 96 kHz only for the WAV fallback.
 
 ## Project status
 

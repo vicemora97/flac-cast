@@ -1,4 +1,5 @@
-export type SearchSort = "artist" | "title" | "quality";
+export type SearchSort = "artist" | "title" | "album" | "quality";
+export type SearchDirection = "asc" | "desc";
 
 export type SearchTrackRecord = {
   id: string;
@@ -7,6 +8,7 @@ export type SearchTrackRecord = {
   album: string;
   bitsPerSample?: number;
   sampleRate?: number;
+  bitrate?: number;
 };
 
 export type SearchWorkerRequest =
@@ -21,6 +23,7 @@ export type SearchWorkerRequest =
       requestId: number;
       query: string;
       sort: SearchSort;
+      direction: SearchDirection;
       language: "en" | "es";
     };
 

@@ -7,6 +7,9 @@ export type Track = {
   durationSeconds?: number;
   sampleRate?: number;
   bitsPerSample?: number;
+  bitrate?: number;
+  fileExtension?: string;
+  contentType?: string;
   trackNumber?: number;
   discNumber?: number;
   artworkUrl?: string;
@@ -33,12 +36,22 @@ export type CastState = {
   muted?: boolean;
   error?: string;
   idleReason?: string;
-  deliveryMode?: "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless";
+  deliveryMode?: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "wav-lossless";
   deliveryBits?: number;
   deliveryPhase?: "preparing" | "loading" | "converting" | "playing" | "failed";
+  currentTrackId?: string;
+  repeatMode?: "off" | "all" | "single";
+  queueActive?: boolean;
 };
 
-export type CastTrack = Pick<Track, "title" | "artist" | "album" | "albumArtist" | "trackNumber" | "discNumber" | "durationSeconds" | "sampleRate" | "bitsPerSample" | "castUrl" | "castArtworkUrl">;
+export type CastTrack = Pick<Track, "id" | "title" | "artist" | "album" | "albumArtist" | "trackNumber" | "discNumber" | "durationSeconds" | "sampleRate" | "bitsPerSample" | "bitrate" | "fileExtension" | "contentType" | "localUrl" | "castUrl" | "castArtworkUrl">;
+
+export type CastQueueRequest = {
+  tracks: CastTrack[];
+  currentIndex: number;
+  startTimeSeconds?: number;
+  repeatMode: "off" | "all" | "single";
+};
 
 export type LyricsTrack = Pick<Track, "title" | "artist" | "album" | "durationSeconds">;
 
@@ -115,10 +128,12 @@ export type HiresApi = {
   getCastState(refreshVolume?: boolean): Promise<CastState>;
   connectCast(deviceId: string): Promise<CastState>;
   castTrack(track: CastTrack, startTimeSeconds?: number): Promise<CastState>;
+  castQueue(request: CastQueueRequest): Promise<CastState>;
   castCommand(command: "play" | "pause"): Promise<CastState>;
   castSeek(seconds: number): Promise<CastState>;
   castVolume(level: number): Promise<CastState>;
   prewarmCastTracks(tracks: CastTrack[]): Promise<number>;
+  prepareLocalTrack(track: CastTrack): Promise<string>;
   disconnectCast(): Promise<CastState>;
   getMediaAccess(): Promise<MediaAccess | undefined>;
   getLyrics(track: LyricsTrack): Promise<LyricsLookupResult>;
