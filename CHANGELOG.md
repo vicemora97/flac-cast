@@ -4,21 +4,32 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
-- Update an active Cast queue in place when shuffle, repeat, or upcoming tracks change, avoiding a reload of the song currently playing.
-- Make list repeat contextual: it now loops the playlist, album, artist, or track list that started playback instead of always selecting the current album.
-- Keep the repeat selection stable across Cast track changes instead of allowing a receiver's transient `REPEAT_OFF` loading status to clear it.
-- Allow local builds inside OneDrive folders to overwrite generated artifacts when OneDrive temporarily denies deleting the `dist` directory.
-- Start clean uncached FLAC files directly while preparing the bounded upcoming window in the background, reducing first-play latency for NAS libraries.
-- Route prepared files into the receiver queue and update only changed future items instead of rebuilding the complete queue.
-- Learn successful delivery profiles per receiver and technical FLAC profile so future prewarming can prepare the proven compatible variant.
-- Reuse immutable prepared media through HTTP keep-alive, cache validators, and asynchronous file metadata reads while exposing response timing for diagnostics.
-- Reduce receiver volume polling without delaying Cast status updates.
-- Refresh local mDNS discovery in a short bounded burst when the Cast panel opens, avoiding the previous five-second empty-list wait after a late startup response.
-- Preserve track and position when the Cast control socket closes unexpectedly and perform one bounded automatic session reconstruction instead of immediately abandoning playback.
-- Add a delayed, state-verified queue watchdog that advances playback only when the receiver remains stuck on the same completed track, preserving native gapless transitions without leaving playback at the end.
-- Isolate each reconstructed Cast session from stale queue synchronization, prewarming, and end-of-track watchdog callbacks left by the interrupted session.
-- Keep receiver volume separate from Cast media-session volume so playback, queue, shuffle, and repeat updates no longer make the soundbar slider flash an incorrect value.
-- Add track context-menu shortcuts for opening the corresponding artist or album, plus browser-style Back and Forward library navigation with search and scroll restoration.
+## [1.0.5] - 2026-08-21
+
+### Added
+
+- Added track context-menu shortcuts for opening the corresponding artist or album.
+- Added browser-style Back and Forward library navigation with search and scroll restoration.
+- Added a delayed, state-verified Cast queue watchdog that advances only when the receiver remains stuck on the same completed track.
+
+### Changed
+
+- Active Cast queues now update in place when shuffle, repeat, or upcoming tracks change, avoiding a reload of the song currently playing.
+- List repeat is now contextual and loops the playlist, album, artist, or track list that started playback.
+- Clean uncached FLAC files start directly while the bounded upcoming window is prepared in the background, reducing first-play latency for NAS libraries.
+- Prepared files are routed into the receiver queue, and only changed future items are replaced instead of rebuilding the complete queue.
+- Successful delivery profiles are learned per receiver and technical FLAC profile so future prewarming can prepare the proven compatible variant.
+- Immutable prepared media is reused through HTTP keep-alive, cache validators, and asynchronous file metadata reads with response timing for diagnostics.
+- Receiver volume polling is less frequent without delaying playback-state updates.
+- Cast discovery performs a short bounded mDNS refresh burst when its panel opens.
+- Local builds inside OneDrive folders can overwrite generated artifacts when OneDrive temporarily denies deleting the `dist` directory.
+
+### Fixed
+
+- Preserved the repeat selection across Cast track changes instead of allowing a transient receiver `REPEAT_OFF` loading status to clear it.
+- Preserved the active track and position when the Cast control socket closes unexpectedly, with one bounded automatic session reconstruction.
+- Isolated reconstructed Cast sessions from stale queue synchronization, prewarming, and end-of-track watchdog callbacks.
+- Kept physical receiver volume separate from Cast media-session volume so queue and playback changes no longer make the soundbar slider flash an incorrect value.
 
 ## [1.0.4] - 2026-08-20
 
@@ -104,7 +115,9 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
-[1.0.4]: https://github.com/vicemora97/flac-cast/compare/v1.0.3...v1.0.4
+[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/vicemora97/flac-cast/compare/738582e...v1.0.5
+[1.0.4]: https://github.com/vicemora97/flac-cast/compare/v1.0.3...738582e
 [1.0.3]: https://github.com/vicemora97/flac-cast/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/vicemora97/flac-cast/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/vicemora97/flac-cast/compare/v1.0.0...v1.0.1
