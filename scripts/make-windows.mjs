@@ -17,7 +17,9 @@ await installer.createWindowsInstaller({
   appDirectory,
   outputDirectory,
   authors: "Flac Cast contributors",
-  description: "Local hi-res FLAC player with Google Cast support",
+  // Squirrel maps this field to the outer Setup.exe ProductName resource.
+  // Keep it identical to the project name for SignPath metadata enforcement.
+  description: "Flac Cast",
   exe: "Flac Cast.exe",
   name: "FlacCast",
   setupExe: setupFileName,

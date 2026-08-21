@@ -4,9 +4,15 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-08-21
+
 ### Added
 
 - Added a trademark policy that distinguishes the GPL-licensed source from the official Flac Cast name, icon, and release identity.
+
+### Fixed
+
+- Corrected the Windows installer product metadata so `ProductName` is consistently reported as `Flac Cast`, as required by the published code-signing policy.
 
 ## [1.0.5] - 2026-08-21
 
@@ -119,7 +125,8 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
-[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/vicemora97/flac-cast/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/vicemora97/flac-cast/compare/2de1eb9...v1.0.5
 [1.0.4]: https://github.com/vicemora97/flac-cast/compare/v1.0.3...2de1eb9
 [1.0.3]: https://github.com/vicemora97/flac-cast/compare/v1.0.2...v1.0.3
