@@ -22,9 +22,9 @@ declare module "castv2-client" {
     idleReason?: "CANCELLED" | "INTERRUPTED" | "FINISHED" | "ERROR";
     currentTime?: number;
     volume?: { level?: number; muted?: boolean };
-    media?: { duration?: number; customData?: { trackId?: string }; metadata?: Record<string, unknown> };
+    media?: { duration?: number; customData?: { trackId?: string; deliveryMode?: import("../shared/contracts.js").CastDeliveryMode; deliveryBits?: number; deliverySampleRate?: number }; metadata?: Record<string, unknown> };
     currentItemId?: number;
-    items?: Array<{ itemId?: number; media?: { customData?: { trackId?: string } } }>;
+    items?: Array<{ itemId?: number; media?: { contentId?: string; customData?: { trackId?: string; deliveryMode?: import("../shared/contracts.js").CastDeliveryMode; deliveryBits?: number; deliverySampleRate?: number } } }>;
     repeatMode?: "REPEAT_OFF" | "REPEAT_ALL" | "REPEAT_SINGLE" | "REPEAT_ALL_AND_SHUFFLE";
     supportedMediaCommands?: number;
   };

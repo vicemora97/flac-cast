@@ -105,7 +105,7 @@ Windows Recycle Bin support is usually unavailable for network shares. Flac Cast
 When the repository was created by a sandbox or another Windows identity, Git may require an explicit safe-directory entry:
 
 ```powershell
-git config --global --add safe.directory C:/path/to/flac-cast
+git config --global --add safe.directory "C:/path/to/flac-cast"
 ```
 
 Add only the exact trusted repository path.

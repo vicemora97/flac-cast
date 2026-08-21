@@ -37,6 +37,7 @@ SignPath requires the project to be already released in the form that will be si
 - Linux x86_64 AppImage and SHA-256 file;
 - a link titled **Code signing policy** to `docs/CODE_SIGNING_POLICY.md`;
 - a link to `PRIVACY.md`, `LICENSE`, source for the exact tag, and `THIRD_PARTY_NOTICES.md`;
+- a link to the exact FFmpeg source/build provenance for every packaged platform binary, as documented in `THIRD_PARTY_NOTICES.md`;
 - a warning that Windows and macOS artifacts are not yet signed/notarized.
 
 Do not move an existing tag. If source or packaging changed after `v1.0.1`, create a new patch version and tag.

@@ -80,17 +80,17 @@ On refresh, unchanged files reuse their previous records. Only new or modified f
 
 ### MediaServer
 
-`MediaServer` binds an ephemeral port on all interfaces and creates a random token for each run. Only files explicitly registered in memory can be served. It supports `OPTIONS`, `HEAD`, full responses, byte ranges, CORS, every indexed audio MIME type, and artwork endpoints.
+`MediaServer` binds an ephemeral port on all interfaces and creates a random token for each run. Only files explicitly registered in memory can be served. It supports `OPTIONS`, `HEAD`, full responses, byte ranges, CORS, validators, persistent HTTP connections, every indexed audio MIME type, and artwork endpoints. Prepared immutable files cache their metadata; original library files are revalidated with asynchronous file-system operations.
 
 Local playback receives a `127.0.0.1` URL. Cast receives a LAN IPv4 URL. The source path is never exposed to the renderer.
 
 ### CastController
 
-`CastController` discovers `_googlecast._tcp` services through mDNS, starts the Default Media Receiver, loads media and bounded receiver queues, tracks receiver state, and controls volume, seek, pause, and resume. It maintains a short-lived device list and refreshes receiver volume separately from media status. When direct playback fails, it can rebuild the receiver session once, retry the original media with a fresh URL, and only then use compatible FLAC and universal WAV fallbacks.
+`CastController` discovers `_googlecast._tcp` services through mDNS, starts the Default Media Receiver, loads media and bounded receiver queues, tracks receiver state, and controls volume, seek, pause, and resume. It maintains a short-lived device list and refreshes receiver volume separately from media status. Active queues are synchronized differentially so unchanged receiver items retain their IDs and prepared URLs. When direct playback fails, it can rebuild the receiver session once, retry the original media with a fresh URL, and only then use compatible FLAC and universal WAV fallbacks. Successful fallback families are remembered per receiver and exact technical profile to guide later prewarming without lowering the first quality attempt.
 
 ### LosslessTranscoder
 
-`LosslessTranscoder` inspects FLAC headers, copies compatible files into the Cast cache, strips oversized non-audio payloads by stream-copying the FLAC audio when necessary, and creates compatible FLAC or WAV PCM fallback files. Its cache is bounded by file count and total size.
+`LosslessTranscoder` inspects FLAC headers, reuses prepared entries when available, copies upcoming compatible files into the Cast cache, strips oversized non-audio payloads by stream-copying the FLAC audio when necessary, and creates compatible FLAC or WAV PCM fallback files. A clean uncached current FLAC can be streamed from the source immediately while future preparation continues. The disk cache is bounded by file count and total size.
 
 ### PreferencesStore
 

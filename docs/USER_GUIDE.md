@@ -58,6 +58,10 @@ Search is case-insensitive and accent-insensitive, so `beyonce` can match `Beyon
 
 For large result sets, Flac Cast displays the first 200 rows and reports the full number of matches. The complete result set is still retained as the scheduled playback context, so Next, Previous, Shuffle, and queue behavior are not limited to those 200 visible rows.
 
+### Navigation history
+
+Use the Back and Forward buttons beside the library tabs to move between track lists, searches, albums, artists, and playlists. Each history entry restores its scroll position. Opening a different library tab creates a new entry, while rescans and metadata updates refresh the current entry without discarding the navigation history.
+
 ## Playback controls
 
 The footer provides Previous, Play/Pause, Next, Shuffle, Repeat, time, seek, and volume controls.
@@ -91,6 +95,8 @@ The track menu offers:
 - play now;
 - add to queue;
 - add to a playlist;
+- go directly to the track's artist;
+- go directly to the track's album;
 - open file location;
 - remove from the current playlist, when applicable;
 - delete the source file.

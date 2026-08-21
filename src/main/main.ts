@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
 import squirrelStartup = require("electron-squirrel-startup");
+import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { LibraryManager, LibraryUnavailableError } from "./library.js";
@@ -9,7 +10,7 @@ import { CastController } from "./cast-controller.js";
 import { LosslessTranscoder } from "./lossless-transcoder.js";
 import { LyricsService } from "./lyrics.js";
 import { PreferencesStore } from "./preferences.js";
-import type { CastQueueRequest, CastTrack, LibraryResult, PlaybackCommand, TaskbarPlaybackState } from "../shared/contracts.js";
+import type { CastDeliveryMode, CastQueueRequest, CastTrack, LibraryResult, PlaybackCommand, TaskbarPlaybackState } from "../shared/contracts.js";
 
 if (squirrelStartup) app.quit();
 app.setName("Flac Cast");
@@ -27,6 +28,14 @@ let libraryManager: LibraryManager;
 let libraryWatcher: LibraryWatcher;
 let libraryActivityCount = 0;
 let castPrewarmGeneration = 0;
+let preparedCastDeviceId: string | undefined;
+const preparedCastTracks = new Map<string, {
+  sourcePath: string;
+  filePath: string;
+  deliveryMode: CastDeliveryMode;
+  bits?: number;
+  sampleRate?: number;
+}>();
 let tray: Tray | undefined;
 let isQuitting = false;
 let mediaShortcutsRegistered = false;
@@ -39,11 +48,25 @@ const castController = new CastController(
     if (!track.castUrl) throw new Error("La pista no tiene una URL local para Chromecast");
     const sourcePath = mediaServer.resolveFile(track.castUrl);
     if (!sourcePath) throw new Error("No se encontró el archivo original para preparar el FLAC");
-    const prepared = await transcoder.prepareFlac(sourcePath);
+    const prewarmed = preparedCastTracks.get(track.id);
+    if (prewarmed?.sourcePath === sourcePath && (prewarmed.deliveryMode === "flac-cached" || prewarmed.deliveryMode === "flac-repacked")) {
+      transcoder.setActiveFile(prewarmed.filePath);
+      const endpoint = mediaServer.register(prewarmed.filePath, castController.getReceiverHost(), { immutable: true });
+      if (endpoint.castUrl) return { url: endpoint.castUrl, repacked: prewarmed.deliveryMode === "flac-repacked", cached: true };
+    }
+
+    const inspection = await transcoder.inspectPreparedFlac(sourcePath);
+    if (!inspection.prepared && !inspection.repacked) {
+      // A clean FLAC can be served immediately from its source. Upcoming files
+      // are copied in the background by the bounded prewarm pipeline.
+      return { url: track.castUrl, repacked: false, cached: false };
+    }
+    const prepared = inspection.prepared ?? await transcoder.prepareFlac(sourcePath);
+    rememberPreparedCastTrack(track, sourcePath, prepared.filePath, prepared.repacked ? "flac-repacked" : "flac-cached", track.bitsPerSample, track.sampleRate);
     transcoder.setActiveFile(prepared.filePath);
-    const endpoint = mediaServer.register(prepared.filePath, castController.getReceiverHost());
+    const endpoint = mediaServer.register(prepared.filePath, castController.getReceiverHost(), { immutable: true });
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el FLAC preparado");
-    return { url: endpoint.castUrl, repacked: prepared.repacked };
+    return { url: endpoint.castUrl, repacked: prepared.repacked, cached: true };
   },
   async (track, targetBits, targetSampleRate) => {
     if (!track.castUrl) throw new Error("La pista no tiene una URL local para Chromecast");
@@ -51,7 +74,8 @@ const castController = new CastController(
     if (!sourcePath) throw new Error("No se encontró el archivo local para convertirlo");
     const wavPath = await transcoder.toWav(sourcePath, targetBits, track.sampleRate, targetSampleRate);
     transcoder.setActiveFile(wavPath);
-    const endpoint = mediaServer.register(wavPath, castController.getReceiverHost());
+    rememberPreparedCastTrack(track, sourcePath, wavPath, "wav-lossless", targetBits, targetSampleRate);
+    const endpoint = mediaServer.register(wavPath, castController.getReceiverHost(), { immutable: true });
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el WAV");
     return endpoint.castUrl;
   },
@@ -61,7 +85,8 @@ const castController = new CastController(
     if (!sourcePath) throw new Error("No se encontró el archivo local para preparar FLAC compatible");
     const compatiblePath = await transcoder.toCompatibleFlac(sourcePath, targetBits, targetSampleRate);
     transcoder.setActiveFile(compatiblePath);
-    const endpoint = mediaServer.register(compatiblePath, castController.getReceiverHost());
+    rememberPreparedCastTrack(track, sourcePath, compatiblePath, "flac-compatible", targetBits, targetSampleRate);
+    const endpoint = mediaServer.register(compatiblePath, castController.getReceiverHost(), { immutable: true });
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el FLAC compatible");
     return endpoint.castUrl;
   }
@@ -333,42 +358,35 @@ ipcMain.handle("ui:set-scale", (event, scale: number) => {
 });
 
 ipcMain.handle("cast:devices", () => castController.listDevices());
-ipcMain.handle("cast:state", (_event, refreshVolume = true) => refreshVolume ? castController.getFreshState() : castController.getState());
-ipcMain.handle("cast:connect", (_event, deviceId: string) => castController.connect(deviceId));
+ipcMain.handle("cast:state", async (_event, refreshVolume = true) => {
+  const state = refreshVolume ? await castController.getFreshState() : castController.getState();
+  syncActiveCastCache(state);
+  return state;
+});
+ipcMain.handle("cast:connect", async (_event, deviceId: string) => {
+  if (preparedCastDeviceId !== deviceId) preparedCastTracks.clear();
+  const state = await castController.connect(deviceId);
+  preparedCastDeviceId = deviceId;
+  return state;
+});
 ipcMain.handle("cast:track", (_event, track: CastTrack, startTimeSeconds?: number) => {
   const receiverHost = castController.getReceiverHost();
-  const routedTrack: CastTrack = {
-    ...track,
-    castUrl: mediaServer.routeForReceiver(track.castUrl, receiverHost),
-    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
-  };
+  const routedTrack = routeCastTrack(track, receiverHost, false);
   return castController.castTrack(routedTrack, startTimeSeconds);
 });
 ipcMain.handle("cast:queue", (_event, request: CastQueueRequest) => {
   const receiverHost = castController.getReceiverHost();
-  const tracks = request.tracks.map((track) => ({
-    ...track,
-    castUrl: mediaServer.routeForReceiver(track.castUrl, receiverHost),
-    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
-  }));
+  const tracks = request.tracks.map((track, index) => routeCastTrack(track, receiverHost, index !== request.currentIndex));
   return castController.castQueue({ ...request, tracks });
 });
 ipcMain.handle("cast:queue-update", (_event, request: CastQueueRequest) => {
   const receiverHost = castController.getReceiverHost();
-  const tracks = request.tracks.map((track) => ({
-    ...track,
-    castUrl: mediaServer.routeForReceiver(track.castUrl, receiverHost),
-    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
-  }));
+  const tracks = request.tracks.map((track, index) => routeCastTrack(track, receiverHost, index !== request.currentIndex));
   return castController.updateQueue({ ...request, tracks });
 });
 ipcMain.handle("cast:queue-modes", (_event, request: CastQueueRequest) => {
   const receiverHost = castController.getReceiverHost();
-  const tracks = request.tracks.map((track) => ({
-    ...track,
-    castUrl: mediaServer.routeForReceiver(track.castUrl, receiverHost),
-    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
-  }));
+  const tracks = request.tracks.map((track, index) => routeCastTrack(track, receiverHost, index !== request.currentIndex));
   return castController.updateQueueModes({ ...request, tracks });
 });
 ipcMain.handle("cast:command", (_event, command: "play" | "pause") => castController.command(command));
@@ -385,8 +403,27 @@ ipcMain.handle("cast:prewarm", async (_event, tracks: CastTrack[]): Promise<numb
     const sourcePath = mediaServer.resolveFile(track.castUrl);
     if (!sourcePath) continue;
     try {
-      if (track.fileExtension === ".flac" || track.contentType?.includes("flac")) await transcoder.prepareFlac(sourcePath);
-      prepared += 1;
+      if (track.fileExtension === ".flac" || track.contentType?.includes("flac")) {
+        const startedAt = Date.now();
+        const preferred = castController.getPreferredPrewarmDelivery(track);
+        const targetBits: 16 | 24 = track.bitsPerSample && track.bitsPerSample > 16 ? 24 : 16;
+        const targetRate = Math.max(8_000, Math.min(48_000, Math.round(track.sampleRate ?? 48_000)));
+        if (preferred === "compatible") {
+          const filePath = await transcoder.toCompatibleFlac(sourcePath, targetBits, targetRate);
+          rememberPreparedCastTrack(track, sourcePath, filePath, "flac-compatible", targetBits, targetRate);
+          mediaServer.register(filePath, castController.getReceiverHost(), { immutable: true });
+        } else if (preferred === "wav") {
+          const filePath = await transcoder.toWav(sourcePath, 16, track.sampleRate, targetRate);
+          rememberPreparedCastTrack(track, sourcePath, filePath, "wav-lossless", 16, targetRate);
+          mediaServer.register(filePath, castController.getReceiverHost(), { immutable: true });
+        } else {
+          const result = await transcoder.prepareFlac(sourcePath);
+          rememberPreparedCastTrack(track, sourcePath, result.filePath, result.repacked ? "flac-repacked" : "flac-cached", track.bitsPerSample, track.sampleRate);
+          mediaServer.register(result.filePath, castController.getReceiverHost(), { immutable: true });
+        }
+        console.info(`[cast:prewarm] ${track.id} ${preferred} ready in ${Date.now() - startedAt} ms`);
+        prepared += 1;
+      }
     } catch (error) {
       console.warn(`No se pudo precalentar ${track.title}`, error);
     }
@@ -402,6 +439,8 @@ ipcMain.handle("local:prepare-track", async (_event, track: CastTrack): Promise<
 });
 ipcMain.handle("cast:disconnect", () => {
   castPrewarmGeneration += 1;
+  preparedCastTracks.clear();
+  preparedCastDeviceId = undefined;
   transcoder.setActiveFile(undefined);
   return castController.disconnect();
 });
@@ -564,6 +603,68 @@ function setLibraryActivity(active: boolean): void {
 
 function sameFolder(a: string, b: string): boolean {
   return a.replace(/[\\/]+$/, "").localeCompare(b.replace(/[\\/]+$/, ""), undefined, { sensitivity: "accent" }) === 0;
+}
+
+function rememberPreparedCastTrack(
+  track: CastTrack,
+  sourcePath: string,
+  filePath: string,
+  deliveryMode: CastDeliveryMode,
+  bits?: number,
+  sampleRate?: number
+): void {
+  preparedCastTracks.delete(track.id);
+  preparedCastTracks.set(track.id, { sourcePath, filePath, deliveryMode, bits, sampleRate });
+  while (preparedCastTracks.size > 16) {
+    const oldestTrackId = preparedCastTracks.keys().next().value;
+    if (typeof oldestTrackId !== "string") break;
+    preparedCastTracks.delete(oldestTrackId);
+  }
+}
+
+function routeCastTrack(track: CastTrack, receiverHost: string | undefined, usePrepared: boolean): CastTrack {
+  const originalCastUrl = mediaServer.routeForReceiver(track.castUrl, receiverHost);
+  const routed: CastTrack = {
+    ...track,
+    castUrl: originalCastUrl,
+    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost),
+    castDeliveryMode: track.fileExtension === ".flac" || track.contentType?.includes("flac") ? "flac-original" : "original",
+    castDeliveryBits: track.bitsPerSample,
+    castDeliverySampleRate: track.sampleRate
+  };
+  if (!usePrepared || !track.castUrl) return routed;
+
+  const sourcePath = mediaServer.resolveFile(track.castUrl);
+  const prepared = preparedCastTracks.get(track.id);
+  if (!sourcePath || prepared?.sourcePath !== sourcePath) return routed;
+  if (!existsSync(prepared.filePath)) {
+    preparedCastTracks.delete(track.id);
+    return routed;
+  }
+  const endpoint = mediaServer.register(prepared.filePath, receiverHost, { immutable: true });
+  if (!endpoint.castUrl) return routed;
+  return {
+    ...routed,
+    castUrl: endpoint.castUrl,
+    contentType: prepared.deliveryMode === "wav-lossless" ? "audio/wav" : "audio/flac",
+    fileExtension: prepared.deliveryMode === "wav-lossless" ? ".wav" : ".flac",
+    castDeliveryMode: prepared.deliveryMode,
+    castDeliveryBits: prepared.bits,
+    castDeliverySampleRate: prepared.sampleRate
+  };
+}
+
+function syncActiveCastCache(state: { connected: boolean; currentTrackId?: string; deliveryMode?: CastDeliveryMode }): void {
+  if (!state.connected) {
+    transcoder.setActiveFile(undefined);
+    return;
+  }
+  if (state.deliveryMode === "original" || state.deliveryMode === "flac-original") {
+    transcoder.setActiveFile(undefined);
+    return;
+  }
+  const prepared = state.currentTrackId ? preparedCastTracks.get(state.currentTrackId) : undefined;
+  transcoder.setActiveFile(prepared && existsSync(prepared.filePath) ? prepared.filePath : undefined);
 }
 
 function resolveLibraryTrack(localUrl: string): { filePath: string; libraryFolder: string } | undefined {

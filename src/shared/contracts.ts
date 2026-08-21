@@ -36,7 +36,7 @@ export type CastState = {
   muted?: boolean;
   error?: string;
   idleReason?: string;
-  deliveryMode?: "original" | "flac-original" | "flac-cached" | "flac-repacked" | "flac-compatible" | "wav-lossless";
+  deliveryMode?: CastDeliveryMode;
   deliveryBits?: number;
   deliverySampleRate?: number;
   deliveryPhase?: "preparing" | "loading" | "converting" | "playing" | "failed";
@@ -45,7 +45,13 @@ export type CastState = {
   queueActive?: boolean;
 };
 
-export type CastTrack = Pick<Track, "id" | "title" | "artist" | "album" | "albumArtist" | "trackNumber" | "discNumber" | "durationSeconds" | "sampleRate" | "bitsPerSample" | "bitrate" | "fileExtension" | "contentType" | "localUrl" | "castUrl" | "castArtworkUrl">;
+export type CastDeliveryMode = "original" | "flac-original" | "flac-cached" | "flac-repacked" | "flac-compatible" | "wav-lossless";
+
+export type CastTrack = Pick<Track, "id" | "title" | "artist" | "album" | "albumArtist" | "trackNumber" | "discNumber" | "durationSeconds" | "sampleRate" | "bitsPerSample" | "bitrate" | "fileExtension" | "contentType" | "localUrl" | "castUrl" | "castArtworkUrl"> & {
+  castDeliveryMode?: CastDeliveryMode;
+  castDeliveryBits?: number;
+  castDeliverySampleRate?: number;
+};
 
 export type CastQueueRequest = {
   tracks: CastTrack[];
@@ -80,6 +86,8 @@ export type MediaAccess = {
   range?: string;
   status: number;
   bytes?: number;
+  cacheable?: boolean;
+  responseMilliseconds?: number;
 };
 
 export type PlaybackCommand = "previous" | "toggle" | "next";

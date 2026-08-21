@@ -40,8 +40,32 @@ export class LosslessTranscoder {
   }
 
   setActiveFile(filePath?: string): void {
+    if (this.activeFilePath === filePath) return;
     this.activeFilePath = filePath;
     if (filePath) void touch(filePath);
+  }
+
+  async inspectPreparedFlac(sourcePath: string): Promise<{ repacked: boolean; prepared?: PreparedFlac }> {
+    const sourceStat = await stat(sourcePath);
+    const inspection = await inspectFlac(sourcePath, sourceStat.size);
+    const repacked = inspection.metadataBytes > MAX_CAST_METADATA_BYTES
+      || inspection.paddingBytes > MAX_PADDING_BYTES;
+    const key = createHash("sha256")
+      .update(`flac-cache-v2\0${sourcePath}\0${sourceStat.size}\0${sourceStat.mtimeMs}\0${repacked}`)
+      .digest("hex");
+    const outputPath = join(this.cacheFolder, `flac-${key}.flac`);
+    try {
+      const outputStat = await stat(outputPath);
+      if (outputStat.size > 42) {
+        await touch(outputPath);
+        await this.pruneCache(outputPath);
+        return {
+          repacked,
+          prepared: { filePath: outputPath, repacked, metadataBytes: inspection.metadataBytes }
+        };
+      }
+    } catch { /* No hay una copia preparada disponible. */ }
+    return { repacked };
   }
 
   async prepareFlac(sourcePath: string): Promise<PreparedFlac> {

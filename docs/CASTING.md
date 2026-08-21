@@ -28,7 +28,7 @@ The controller browses `_googlecast._tcp` services with `bonjour-service`. It re
 
 For FLAC tracks, Flac Cast uses this compatibility order:
 
-1. inspect and prepare a cached FLAC;
+1. inspect the FLAC container and reuse a prepared cache entry when one exists;
 2. try `audio/flac`;
 3. try `audio/x-flac`;
 4. if direct playback fails, rebuild the receiver session once and retry the original media with a cache-busting URL;
@@ -40,7 +40,7 @@ Other supported containers are first sent with their registered MIME type. If th
 
 ### Prepared FLAC
 
-Most files are copied to a bounded temporary cache. FLAC files with unusually large metadata, embedded images, or padding can be repacked with FFmpeg using audio stream copy. This changes the container layout but does not re-encode FLAC audio.
+A clean current FLAC with no prepared entry is served directly from its source, so playback does not wait for a complete NAS-to-cache copy. Upcoming files are copied by the background prewarmer. FLAC files with unusually large metadata, embedded images, or padding are prepared before playback and can be repacked with FFmpeg using audio stream copy. This changes the container layout but does not re-encode FLAC audio.
 
 ### Compatible fallbacks
 
@@ -59,9 +59,13 @@ The footer badge and Cast panel report effective delivery information:
 
 This describes what Flac Cast sends. It cannot guarantee that a TV, soundbar, HDMI link, DSP stage, or DAC does not resample internally.
 
+Receiver volume and media-session volume are separate Cast protocol fields. Flac Cast drives the soundbar slider only from receiver status events, explicit `getVolume` refreshes, and acknowledged receiver-volume commands; media playback and queue responses cannot overwrite it.
+
 ## Prewarming
 
-After a Cast session starts, the renderer schedules preparation for up to five upcoming tracks. Preparation is staggered and uses the disk cache instead of retaining complete tracks in RAM. This reduces the pause between tracks without loading the entire queue.
+After a Cast session starts, the renderer schedules preparation for up to five upcoming tracks. Preparation is staggered and uses the disk cache instead of retaining complete tracks in RAM. Prepared LAN URLs are then inserted into the existing receiver queue without reloading the current item. This reduces the pause between tracks without loading the entire queue.
+
+The controller remembers the successful delivery family for each receiver and exact FLAC bit-depth/sample-rate profile during the running app session. Original FLAC remains the first quality choice. Only after that profile has required compatible FLAC or WAV does later prewarming prepare the proven fallback in advance.
 
 Manually added FIFO tracks take priority over the scheduled queue. When that priority window changes, new uncached FLAC files reserve cache capacity before they are copied; older unprotected preparations are removed first when the eight-file or 1 GiB limit would be exceeded.
 
@@ -71,15 +75,21 @@ Prewarming is canceled when the Cast generation changes or the receiver disconne
 
 Flac Cast sends up to 40 queue items to the Default Media Receiver: up to five recent history items, the current track, manually added FIFO entries, and then the scheduled context. The bound keeps Cast protocol messages and receiver memory predictable even when the desktop queue contains thousands of tracks.
 
-The receiver assigns queue item IDs and can process Previous, Next, and repeat commands without waiting for the renderer to load each track. Status messages include the active track ID, allowing Flac Cast to follow transitions initiated from Google Home. Shuffle is materialized as the already shuffled scheduled order; manual FIFO entries remain first.
+The receiver assigns queue item IDs and can process Previous, Next, and repeat commands without waiting for the renderer to load each track. Status messages include the active track ID, allowing Flac Cast to follow transitions initiated from Google Home. Shuffle is materialized as the already shuffled scheduled order; manual FIFO entries remain first. Queue synchronization compares track IDs and media URLs, preserves matching entries, removes only obsolete entries, inserts only missing entries, and reorders the future portion when necessary.
 
 When this receiver-side queue is active, the receiver is the sole owner of automatic track transitions and Flac Cast adopts the reported `currentTrackId`. Desktop auto-advance remains enabled only for the single-item compatibility pipeline. This prevents both sides from starting the same next item roughly one second apart.
+
+Some third-party receivers occasionally report a completed queue item but do not start the assigned successor. Flac Cast gives the receiver a 2.5-second grace period, requests fresh status, and advances through the desktop queue only if the same item is still at its end. A normal or slightly delayed native transition cancels the watchdog, preventing the earlier double-start behavior.
 
 Google Home chooses which controls and queue details to render for each receiver and firmware version. Supplying a valid queue makes the controls available to compatible surfaces but does not guarantee every UI will display all of them.
 
 Flac Cast now starts with a single `QUEUE_LOAD`; it does not play the current item through `LOAD` first. This avoids an audible start, interruption, and restart at zero. The app validates that queued playback reaches and remains in `PLAYING`. If the receiver rejects the first queue request, Flac Cast closes only the stale sender transport, attaches a fresh session once, and retries the same queue with a cache-busted current-media URL. Delayed status or error events from the abandoned transport are ignored. Only if that bounded retry also fails does it switch to the single-item compatibility pipeline without starting another recovery, disable further queue synchronization for that connection, and report that remote queue controls are unavailable. A later manual reconnect permits one fresh queue capability test.
 
 If a receiver-side transition ends in `IDLE/ERROR`, the renderer makes one recovery attempt for that receiver/track pair. The controller rebuilds the Default Media Receiver session, preserves the intended track position and queue, retries original audio, and then uses WAV if required. The retry key is cleared only after playback succeeds, preventing an infinite reconnect loop.
+
+The Cast control socket is separate from the HTTP audio transfer. If that socket closes unexpectedly, the controller retains the device, active track, effective delivery mode, and extrapolated playback position. The renderer can then reconstruct the session and queue once from that position. Explicit user disconnection has no error marker and never triggers this recovery path.
+
+Every reconstructed session receives a new local generation. Queue synchronization, prewarming, and end-of-track callbacks capture that generation and are discarded if they belong to the interrupted session. This prevents a delayed callback from corrupting the successor queue or disabling its automatic-advance watchdog.
 
 ## Cache policy
 
@@ -89,9 +99,9 @@ Electron and V8 handle JavaScript garbage collection, but audio conversion files
 
 ## HTTP behavior
 
-The media server supports full responses, `HEAD`, suffix and normal byte ranges, CORS, identity content encoding, and correct `206`/`416` responses. This is important because receivers may probe headers or request ranges before playback.
+The media server supports full responses, `HEAD`, suffix and normal byte ranges, CORS, identity content encoding, validators, keep-alive, and correct `206`/`304`/`416` responses. Prepared files are immutable and may be reused by the receiver; original library files are revalidated. File metadata reads are asynchronous so a slow NAS response does not block Electron's main event loop.
 
-The Cast panel can display the most recent receiver HTTP status and transferred byte count while buffering.
+The Cast panel can display the most recent receiver HTTP status and transferred byte count while buffering. Internal diagnostics also record whether the response was cacheable and the time needed to produce its headers.
 
 ## Local playback handoff
 

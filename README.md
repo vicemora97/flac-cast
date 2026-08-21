@@ -12,15 +12,16 @@ The application does not upload music to a cloud service. Local playback uses a 
 - Multiple local, mapped-drive, UNC, and NAS library folders.
 - Recursive FLAC, WAV, MP3, M4A/ALAC, AAC, Ogg, Opus, and AIFF indexing with an incremental metadata cache.
 - Embedded artwork plus `cover`, `folder`, `front`, and `album` sidecar artwork.
-- Track, album, artist, playlist, and search views.
+- Track, album, artist, playlist, and search views, with Back/Forward navigation and direct artist/album shortcuts from each track menu.
 - Artist, title, album, and audio-quality sorting with an independent ascending/descending order.
 - Local playback with previous, next, shuffle, contextual list repeat, and track repeat.
 - A FIFO manually-added queue layered above the scheduled playback queue.
 - Synced lyrics through LRCLIB, with instrumental-track detection and an official LRCGET contribution path when a match is missing.
 - English default interface and an English/Spanish language selector.
-- Google Cast discovery, receiver queueing, playback, seeking, pause/resume, repeat, and synchronized volume.
-- Direct source-format delivery with lossless FLAC repacking, compatible FLAC, and universal WAV PCM fallbacks.
-- Disk prewarming for the next five Cast tracks.
+- Google Cast discovery, receiver queueing, playback, seeking, pause/resume, repeat, and synchronized physical-receiver volume.
+- Direct source-format delivery with lossless FLAC repacking, compatible FLAC, and universal WAV PCM fallbacks learned per receiver and audio profile.
+- Resilient Cast sessions with accelerated discovery, bounded automatic reconnection, and a verified end-of-track watchdog.
+- A bounded Cast preparation cache that prioritizes manually queued tracks and reuses up to eight prepared files without exceeding approximately 1 GiB.
 - Global media keys and a notification-area/menu-bar tray, plus Windows taskbar thumbnail controls.
 - Automatic library watching with a periodic NAS-safe consistency scan.
 - Persistent libraries, playlists, window placement, and playback session.

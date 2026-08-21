@@ -17,13 +17,20 @@ type Artist = {
   albums: Album[];
 };
 
-type IconName = "play" | "pause" | "cast" | "music" | "folder" | "trash" | "playlist" | "plus" | "queue" | "more" | "edit" | "x";
+type IconName = "play" | "pause" | "cast" | "music" | "folder" | "trash" | "playlist" | "plus" | "queue" | "more" | "edit" | "x" | "back" | "forward" | "album" | "artist";
 type RepeatMode = "off" | "context" | "track";
 type LibraryView = "tracks" | "albums" | "artists" | "playlists" | "about";
 type TrackSort = "artist" | "title" | "album" | "quality";
 type SortDirection = "asc" | "desc";
 type PlaybackSource = "scheduled" | "manual";
 type PlaybackHistoryEntry = { track: Track; source: PlaybackSource; scheduledIndex: number };
+type LibraryLocation =
+  | { kind: "view"; view: LibraryView }
+  | { kind: "search"; view: LibraryView; query: string }
+  | { kind: "album"; key: string }
+  | { kind: "artist"; name: string }
+  | { kind: "playlist"; id: string };
+type LibraryHistoryEntry = { location: LibraryLocation; scrollY: number };
 
 const SEARCH_DEBOUNCE_MS = 90;
 const SEARCH_RENDER_LIMIT = 200;
@@ -40,6 +47,8 @@ const artistsTab = document.querySelector<HTMLButtonElement>("#artists-tab")!;
 const playlistsTab = document.querySelector<HTMLButtonElement>("#playlists-tab")!;
 const aboutTab = document.querySelector<HTMLButtonElement>("#about-tab")!;
 const viewTabs = document.querySelector<HTMLElement>(".view-tabs")!;
+const libraryBackButton = document.querySelector<HTMLButtonElement>("#library-back")!;
+const libraryForwardButton = document.querySelector<HTMLButtonElement>("#library-forward")!;
 const libraryToolbar = document.querySelector<HTMLElement>(".library-toolbar")!;
 const folderLabel = document.querySelector<HTMLElement>("#folder")!;
 const countLabel = document.querySelector<HTMLElement>("#count")!;
@@ -148,7 +157,14 @@ let lastCastQueueSignature = "";
 let castRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let castRefreshInFlight = false;
 let castAutoRecoveryKey = "";
+let castTransportRecoveryInFlight = false;
+let castQueueAdvanceTimer: ReturnType<typeof setTimeout> | undefined;
+let castQueueAdvanceKey = "";
+let castSessionGeneration = 0;
+let lastCastVolumeRefreshAt = 0;
 let lastDeviceRefreshAt = 0;
+let castDiscoveryGeneration = 0;
+let castDeviceRefreshInFlight: Promise<number> | undefined;
 let lastTaskbarSignature = "";
 let currentLyrics: SyncedLyrics | undefined;
 let lyricsViewState: "idle" | "loading" | "found" | "instrumental" | "missing" | "error" = "idle";
@@ -175,6 +191,9 @@ let toolbarRevealLockUntil = 0;
 const viewScrollPositions: Partial<Record<LibraryView, number>> = {};
 const artworkAccentCache = new Map<string, Promise<string>>();
 const libraryTrackById = new Map<string, Track>();
+let currentLibraryLocation: LibraryLocation = { kind: "view", view: "tracks" };
+const libraryBackHistory: LibraryHistoryEntry[] = [];
+const libraryForwardHistory: LibraryHistoryEntry[] = [];
 
 initializeUiScale();
 initializeLanguage();
@@ -191,14 +210,14 @@ trackSortSelect.addEventListener("change", () => {
   localStorage.setItem("flac-cast-track-sort", trackSort);
   renderSortDirectionOptions();
   if (searchQuery) showSearchResults();
-  else showTracks();
+  else renderCurrentView();
 });
 trackOrderSelect.addEventListener("change", () => {
   trackSortDirection = normalizeSortDirection(trackOrderSelect.value, trackSort);
   localStorage.setItem("flac-cast-track-sort-direction", trackSortDirection);
   renderSortDirectionOptions();
   if (searchQuery) showSearchResults();
-  else showTracks();
+  else renderCurrentView();
 });
 languageSelect.addEventListener("change", () => changeLanguage(normalizeLanguage(languageSelect.value)));
 tracksTab.addEventListener("click", () => openLibraryView("tracks"));
@@ -206,13 +225,16 @@ albumsTab.addEventListener("click", () => openLibraryView("albums"));
 artistsTab.addEventListener("click", () => openLibraryView("artists"));
 playlistsTab.addEventListener("click", () => openLibraryView("playlists"));
 aboutTab.addEventListener("click", () => openLibraryView("about"));
+libraryBackButton.addEventListener("click", () => navigateLibraryHistory("back"));
+libraryForwardButton.addEventListener("click", () => navigateLibraryHistory("forward"));
 librarySearch.addEventListener("input", () => {
   searchQuery = librarySearch.value.trim();
+  updateSearchNavigation(searchQuery);
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
   if (searchQuery) showSearchResults();
   else {
     searchRequestId += 1;
-    renderCurrentView();
+    renderLibraryLocation(currentLibraryLocation, 0);
   }
 });
 previousTrackButton.addEventListener("click", () => void playPrevious());
@@ -258,9 +280,13 @@ castButton.addEventListener("click", () => {
   setLyricsPanelOpen(false);
   renderQueue();
   castPanel.hidden = !castPanel.hidden;
-  if (!castPanel.hidden) void refreshCastDevices();
+  if (!castPanel.hidden) startCastDiscoveryBurst();
+  else castDiscoveryGeneration += 1;
 });
-castClose.addEventListener("click", () => { castPanel.hidden = true; });
+castClose.addEventListener("click", () => {
+  castPanel.hidden = true;
+  castDiscoveryGeneration += 1;
+});
 castToggle.addEventListener("click", () => void toggleCastPlayback());
 remoteToggle.addEventListener("click", () => void toggleCastPlayback());
 remoteProgress.addEventListener("input", () => {
@@ -312,6 +338,7 @@ window.addEventListener("wheel", (event) => {
 }, { passive: false, capture: true });
 castDisconnect.addEventListener("click", async () => {
   try {
+    resetCastSessionTracking();
     currentCastState = await window.hires.disconnectCast();
     renderCastState();
     await refreshCastDevices();
@@ -598,36 +625,128 @@ function normalizeSearchText(value: string): string {
 
 function applyLibraryResult(result: LibraryResult, view: LibraryView): void {
   updateLibraryState(result);
-  if (searchQuery) {
-    showSearchResults(0);
-    return;
+  if (currentLibraryLocation.kind === "view" && currentLibraryLocation.view !== view) {
+    currentLibraryLocation = { kind: "view", view };
   }
-  if (view === "albums") showAlbums();
-  else if (view === "artists") showArtists();
-  else if (view === "playlists") showPlaylists();
-  else if (view === "about") showAbout();
-  else showTracks();
+  renderLibraryLocation(currentLibraryLocation, window.scrollY);
 }
 
 function renderCurrentView(): void {
-  const view = getCurrentView();
-  if (view === "albums") showAlbums();
-  else if (view === "artists") showArtists();
-  else if (view === "playlists") showPlaylists();
-  else if (view === "about") showAbout();
-  else showTracks();
+  renderLibraryLocation(currentLibraryLocation, window.scrollY);
 }
 
-function openLibraryView(view: LibraryView): void {
+function openLibraryView(view: LibraryView, replace = false): void {
+  if (replace) replaceLibraryLocation({ kind: "view", view });
+  else navigateLibrary({ kind: "view", view });
+}
+
+function navigateLibrary(location: LibraryLocation): void {
+  if (sameLibraryLocation(currentLibraryLocation, location)) {
+    renderLibraryLocation(location, 0);
+    return;
+  }
+  libraryBackHistory.push({ location: currentLibraryLocation, scrollY: window.scrollY });
+  if (libraryBackHistory.length > 50) libraryBackHistory.shift();
+  libraryForwardHistory.length = 0;
+  currentLibraryLocation = location;
+  renderLibraryLocation(location, 0);
+}
+
+function replaceLibraryLocation(location: LibraryLocation, scrollY = 0): void {
+  currentLibraryLocation = location;
+  renderLibraryLocation(location, scrollY);
+}
+
+function navigateLibraryHistory(direction: "back" | "forward"): void {
+  const source = direction === "back" ? libraryBackHistory : libraryForwardHistory;
+  const destination = direction === "back" ? libraryForwardHistory : libraryBackHistory;
+  const target = source.pop();
+  if (!target) return;
+  destination.push({ location: currentLibraryLocation, scrollY: window.scrollY });
+  currentLibraryLocation = target.location;
+  renderLibraryLocation(target.location, target.scrollY);
+}
+
+function renderLibraryLocation(location: LibraryLocation, scrollY: number): void {
+  hideContextMenu();
+  if (location.kind === "search") {
+    searchQuery = location.query;
+    librarySearch.value = location.query;
+    setActiveTab(location.view);
+    showSearchResults(0);
+    finishLibraryNavigation(scrollY);
+    return;
+  }
+
   searchQuery = "";
   librarySearch.value = "";
   searchRequestId += 1;
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-  if (view === "albums") showAlbums();
-  else if (view === "artists") showArtists();
-  else if (view === "playlists") showPlaylists();
-  else if (view === "about") showAbout();
+
+  if (location.kind === "album") {
+    const album = groupAlbums(libraryTracks).find((item) => item.key === location.key);
+    if (album) showAlbumDetail(album);
+    else {
+      currentLibraryLocation = { kind: "view", view: "albums" };
+      showAlbums();
+    }
+  } else if (location.kind === "artist") {
+    const artist = groupArtists(libraryTracks).find((item) => item.name === location.name);
+    if (artist) showArtistDetail(artist);
+    else {
+      currentLibraryLocation = { kind: "view", view: "artists" };
+      showArtists();
+    }
+  } else if (location.kind === "playlist") {
+    if (playlists.some((item) => item.id === location.id)) showPlaylistDetail(location.id);
+    else {
+      currentLibraryLocation = { kind: "view", view: "playlists" };
+      showPlaylists();
+    }
+  } else if (location.view === "albums") showAlbums();
+  else if (location.view === "artists") showArtists();
+  else if (location.view === "playlists") showPlaylists();
+  else if (location.view === "about") showAbout();
   else showTracks();
+  finishLibraryNavigation(scrollY);
+}
+
+function finishLibraryNavigation(scrollY: number): void {
+  updateLibraryNavigationButtons();
+  showLibraryToolbar();
+  requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo({ top: Math.max(0, scrollY) })));
+}
+
+function updateLibraryNavigationButtons(): void {
+  libraryBackButton.disabled = libraryBackHistory.length === 0;
+  libraryForwardButton.disabled = libraryForwardHistory.length === 0;
+}
+
+function sameLibraryLocation(left: LibraryLocation, right: LibraryLocation): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "view" && right.kind === "view") return left.view === right.view;
+  if (left.kind === "search" && right.kind === "search") return left.view === right.view && left.query === right.query;
+  if (left.kind === "album" && right.kind === "album") return left.key === right.key;
+  if (left.kind === "artist" && right.kind === "artist") return left.name === right.name;
+  return left.kind === "playlist" && right.kind === "playlist" && left.id === right.id;
+}
+
+function updateSearchNavigation(query: string): void {
+  if (!query) {
+    const view = currentLibraryLocation.kind === "search" ? currentLibraryLocation.view : getCurrentView();
+    navigateLibrary({ kind: "view", view });
+    return;
+  }
+  if (currentLibraryLocation.kind === "search") {
+    currentLibraryLocation = { ...currentLibraryLocation, query };
+    updateLibraryNavigationButtons();
+    return;
+  }
+  libraryBackHistory.push({ location: currentLibraryLocation, scrollY: window.scrollY });
+  if (libraryBackHistory.length > 50) libraryBackHistory.shift();
+  libraryForwardHistory.length = 0;
+  currentLibraryLocation = { kind: "search", view: getCurrentView(), query };
+  updateLibraryNavigationButtons();
 }
 
 function showSearchResults(delay = SEARCH_DEBOUNCE_MS): void {
@@ -789,7 +908,7 @@ function sameLibrary(a: Track[], b: Track[]): boolean {
 async function initializePlaylists(): Promise<void> {
   try {
     playlists = await window.hires.getPlaylists();
-    if (getCurrentView() === "playlists") showPlaylists();
+    if (getCurrentView() === "playlists") renderCurrentView();
   } catch (error) {
     console.warn("No se pudieron cargar las playlists", error);
   }
@@ -821,7 +940,7 @@ async function createPlaylist(event: SubmitEvent): Promise<void> {
   }
   addSelectedTrackAfterCreate = false;
   closePlaylistDialog();
-  if (getCurrentView() === "playlists") showPlaylists();
+  if (getCurrentView() === "playlists") renderCurrentView();
   if (!playlistPicker.hidden) renderPlaylistOptions();
 }
 
@@ -858,7 +977,7 @@ async function addSelectedTrackToPlaylist(playlistId: string): Promise<void> {
   if (!playlistPickerTrack) return;
   playlists = await window.hires.addTrackToPlaylist(playlistId, playlistPickerTrack.id);
   playlistPicker.hidden = true;
-  if (getCurrentView() === "playlists") showPlaylists();
+  if (getCurrentView() === "playlists") renderCurrentView();
 }
 
 function showPlaylists(): void {
@@ -892,7 +1011,7 @@ function showPlaylists(): void {
       createTextElement("strong", "", playlist.name),
       createTextElement("span", "", formatTrackCount(playlist.trackIds.length))
     );
-    button.addEventListener("click", () => showPlaylistDetail(playlist.id));
+    button.addEventListener("click", () => navigateLibrary({ kind: "playlist", id: playlist.id }));
     const menuButton = createMoreButton(t("playlistOptions", { name: playlist.name }));
     menuButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1003,7 +1122,7 @@ function showPlaylistDetail(playlistId: string): void {
   const playlistTracks = playlist.trackIds.flatMap((id) => tracksById.get(id) ?? []);
 
   const backButton = createTextElement("button", "back-button", t("allPlaylists")) as HTMLButtonElement;
-  backButton.addEventListener("click", showPlaylists);
+  backButton.addEventListener("click", () => navigateLibrary({ kind: "view", view: "playlists" }));
   const hero = document.createElement("div");
   hero.className = "album-hero";
   const details = document.createElement("div");
@@ -1035,12 +1154,12 @@ function showPlaylistDetail(playlistId: string): void {
 
 async function deletePlaylist(id: string): Promise<void> {
   playlists = await window.hires.deletePlaylist(id);
-  showPlaylists();
+  replaceLibraryLocation({ kind: "view", view: "playlists" });
 }
 
 async function removePlaylistTrack(playlistId: string, trackId: string): Promise<void> {
   playlists = await window.hires.removeTrackFromPlaylist(playlistId, trackId);
-  showPlaylistDetail(playlistId);
+  replaceLibraryLocation({ kind: "playlist", id: playlistId }, window.scrollY);
 }
 
 function openPlaylistEditDialog(playlistId: string): void {
@@ -1088,8 +1207,8 @@ async function savePlaylistEdits(event: SubmitEvent): Promise<void> {
     artworkDataUrl: editingPlaylistArtwork ?? null
   });
   closePlaylistEditDialog();
-  if (trackList.classList.contains("playlist-detail")) showPlaylistDetail(id);
-  else showPlaylists();
+  if (currentLibraryLocation.kind === "playlist") replaceLibraryLocation({ kind: "playlist", id }, window.scrollY);
+  else replaceLibraryLocation({ kind: "view", view: "playlists" }, window.scrollY);
 }
 
 function showTracks(): void {
@@ -1126,7 +1245,7 @@ function showAlbums(): void {
       createTextElement("strong", "album-title", album.title),
       createTextElement("span", "album-artist", album.artist)
     );
-    button.addEventListener("click", () => showAlbumDetail(album));
+    button.addEventListener("click", () => navigateLibrary({ kind: "album", key: album.key }));
     trackList.append(button);
   });
 }
@@ -1137,7 +1256,7 @@ function showAlbumDetail(album: Album): void {
   trackList.replaceChildren();
 
   const backButton = createTextElement("button", "back-button", t("allAlbums")) as HTMLButtonElement;
-  backButton.addEventListener("click", showAlbums);
+  backButton.addEventListener("click", () => navigateLibrary({ kind: "view", view: "albums" }));
 
   const hero = document.createElement("div");
   hero.className = "album-hero";
@@ -1182,7 +1301,7 @@ function showArtists(): void {
       createTextElement("strong", "artist-title", artist.name),
       createTextElement("span", "artist-summary", `${formatAlbumCount(artist.albums.length)} · ${formatTrackCount(artist.tracks.length)}`)
     );
-    button.addEventListener("click", () => showArtistDetail(artist));
+    button.addEventListener("click", () => navigateLibrary({ kind: "artist", name: artist.name }));
     trackList.append(button);
   });
 }
@@ -1193,7 +1312,7 @@ function showArtistDetail(artist: Artist): void {
   trackList.replaceChildren();
 
   const backButton = createTextElement("button", "back-button", t("allArtists")) as HTMLButtonElement;
-  backButton.addEventListener("click", showArtists);
+  backButton.addEventListener("click", () => navigateLibrary({ kind: "view", view: "artists" }));
 
   const hero = document.createElement("div");
   hero.className = "album-hero";
@@ -1217,7 +1336,7 @@ function showArtistDetail(artist: Artist): void {
       createTextElement("strong", "album-title", album.title),
       createTextElement("span", "album-artist", formatTrackCount(album.tracks.length))
     );
-    button.addEventListener("click", () => showAlbumDetail(album));
+    button.addEventListener("click", () => navigateLibrary({ kind: "album", key: album.key }));
     albumGrid.append(button);
   });
 
@@ -1315,6 +1434,8 @@ function openTrackContextMenu(track: Track, anchor: HTMLElement | { x: number; y
     { label: t("playNow"), icon: "play", action: () => void playTrack(track, playbackContext.some((item) => item.id === track.id) ? playbackContext : libraryTracks) },
     { label: t("addToQueue"), icon: "queue", action: () => void enqueueTrack(track) },
     { label: t("addToAPlaylist"), icon: "playlist", action: () => openPlaylistPicker(track) },
+    { label: t("viewArtist"), icon: "artist", divider: true, action: () => navigateToTrackArtist(track) },
+    { label: t("viewAlbum"), icon: "album", action: () => navigateToTrackAlbum(track) },
     { label: t("openFileLocation"), icon: "folder", divider: true, action: () => void revealTrackFile(track) }
   ];
   if (playlistId) {
@@ -1333,6 +1454,16 @@ function openTrackContextMenu(track: Track, anchor: HTMLElement | { x: number; y
     action: () => void deleteTrackFile(track)
   });
   showContextMenu(items, anchor);
+}
+
+function navigateToTrackArtist(track: Track): void {
+  const artist = groupArtists(libraryTracks).find((item) => item.tracks.some((candidate) => candidate.id === track.id));
+  if (artist) navigateLibrary({ kind: "artist", name: artist.name });
+}
+
+function navigateToTrackAlbum(track: Track): void {
+  const album = groupAlbums(libraryTracks).find((item) => item.tracks.some((candidate) => candidate.id === track.id));
+  if (album) navigateLibrary({ kind: "album", key: album.key });
 }
 
 async function revealTrackFile(track: Track): Promise<void> {
@@ -1661,8 +1792,10 @@ function scheduleCastQueueSync(): void {
     || (currentCastState.playerState !== "PLAYING" && currentCastState.playerState !== "PAUSED")) return;
   const signature = castQueueSignature();
   if (signature === lastCastQueueSignature) return;
+  const generation = castSessionGeneration;
   castQueueSyncTimer = setTimeout(() => {
     castQueueSyncTimer = undefined;
+    if (generation !== castSessionGeneration) return;
     const plan = buildCastQueuePlan();
     lastCastQueueSignature = signature;
     void window.hires.updateCastQueue({
@@ -1670,6 +1803,7 @@ function scheduleCastQueueSync(): void {
       currentIndex: plan.currentIndex,
       repeatMode: repeatMode === "track" ? "single" : repeatMode === "context" ? "all" : "off"
     }).then((state) => {
+      if (generation !== castSessionGeneration) return;
       currentCastState = state;
       renderCastState();
     }).catch((error) => {
@@ -1681,6 +1815,7 @@ function scheduleCastQueueSync(): void {
 
 function adoptRemoteCastTrack(trackId: string | undefined): void {
   if (!trackId || selectedTrack?.id === trackId) return;
+  cancelCastQueueAdvanceWatchdog();
   const track = libraryTrackById.get(trackId);
   if (!track) return;
   if (selectedTrack) rememberCurrentForPrevious();
@@ -1712,23 +1847,61 @@ function adoptRemoteCastTrack(trackId: string | undefined): void {
   updateQueueButtons();
 }
 
-async function refreshCastDevices(): Promise<void> {
-  try {
-    const devices = await window.hires.getCastDevices();
-    renderCastDevices(devices);
-  } catch (error) {
-    showCastError(error);
-  }
+async function refreshCastDevices(): Promise<number> {
+  castDeviceRefreshInFlight ??= window.hires.getCastDevices()
+    .then((devices) => {
+      renderCastDevices(devices);
+      return devices.length;
+    })
+    .catch((error) => {
+      showCastError(error);
+      return 0;
+    })
+    .finally(() => { castDeviceRefreshInFlight = undefined; });
+  return castDeviceRefreshInFlight;
+}
+
+function startCastDiscoveryBurst(): void {
+  const generation = ++castDiscoveryGeneration;
+  void (async () => {
+    const delays = [0, 350, 750, 1_400];
+    for (const delay of delays) {
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (generation !== castDiscoveryGeneration || castPanel.hidden || currentCastState.connected) return;
+      lastDeviceRefreshAt = Date.now();
+      if (await refreshCastDevices() > 0) return;
+    }
+  })();
 }
 
 async function refreshCastState(render = true): Promise<void> {
   try {
-    currentCastState = await window.hires.getCastState(render);
+    const refreshVolume = render && Date.now() - lastCastVolumeRefreshAt >= 5_000;
+    const previousCastState = currentCastState;
+    currentCastState = await window.hires.getCastState(refreshVolume);
+    if (refreshVolume) lastCastVolumeRefreshAt = Date.now();
     adoptRemoteCastTrack(currentCastState.currentTrackId);
     // Repeat is a Flac Cast session preference. Receivers can briefly report
     // REPEAT_OFF while loading a new queue item; treating that transient value
     // as user intent made the repeat button turn itself off after track changes.
-    if (currentCastState.playerState === "PLAYING") castAutoRecoveryKey = "";
+    if (currentCastState.playerState === "PLAYING" && currentCastState.connected) castAutoRecoveryKey = "";
+    if (
+      previousCastState.connected
+      && !currentCastState.connected
+      && Boolean(currentCastState.error)
+      && currentCastState.deviceId
+      && selectedTrack
+      && !trackChangeInProgress
+      && !castTransportRecoveryInFlight
+    ) {
+      const recoveryKey = `transport:${currentCastState.deviceId}:${selectedTrack.id}`;
+      if (castAutoRecoveryKey !== recoveryKey) {
+        castAutoRecoveryKey = recoveryKey;
+        const deviceId = currentCastState.deviceId;
+        const resumeAt = currentCastState.currentTime ?? previousCastState.currentTime ?? 0;
+        void recoverInterruptedCastSession(deviceId, resumeAt);
+      }
+    }
     if (currentCastState.connected && currentCastState.playerState === "IDLE" && currentCastState.idleReason === "ERROR" && selectedTrack && !trackChangeInProgress) {
       const recoveryKey = `${currentCastState.deviceId ?? "cast"}:${selectedTrack.id}`;
       if (castAutoRecoveryKey !== recoveryKey) {
@@ -1743,15 +1916,20 @@ async function refreshCastState(render = true): Promise<void> {
     if (render) renderCastState();
     const duration = currentCastState.duration ?? selectedTrack?.durationSeconds;
     const finished = currentCastState.idleReason === "FINISHED"
-      || (currentCastState.playerState === "PLAYING" && duration != null && (currentCastState.currentTime ?? 0) >= duration - 0.25);
+      || (currentCastState.playerState !== "BUFFERING" && duration != null && (currentCastState.currentTime ?? 0) >= duration - 0.25);
     // A receiver-side queue advances by itself and reports the new track through
     // currentTrackId. Sending our own replacement QUEUE_LOAD at the same boundary
     // starts that item twice: once from the receiver and once from the renderer.
     // Only the single-item compatibility pipeline needs desktop auto-advance.
     const receiverOwnsAutoAdvance = currentCastState.queueActive === true;
-    if (!receiverOwnsAutoAdvance && finished && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
+    if (receiverOwnsAutoAdvance && finished && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
+      scheduleCastQueueAdvanceWatchdog(selectedTrack.id);
+    } else if (!receiverOwnsAutoAdvance && finished && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
+      cancelCastQueueAdvanceWatchdog();
       autoAdvancedTrackId = selectedTrack.id;
       void playNext(true);
+    } else if (!finished || !currentCastState.connected) {
+      cancelCastQueueAdvanceWatchdog();
     }
     if (currentCastState.playerState === "BUFFERING") {
       const access = await window.hires.getMediaAccess();
@@ -1764,6 +1942,70 @@ async function refreshCastState(render = true): Promise<void> {
   } catch {
     // La ventana puede estar cerrándose.
   }
+}
+
+function scheduleCastQueueAdvanceWatchdog(trackId: string): void {
+  const generation = castSessionGeneration;
+  const key = `${generation}:${currentCastState.deviceId ?? "cast"}:${trackId}`;
+  if (castQueueAdvanceTimer && castQueueAdvanceKey === key) return;
+  cancelCastQueueAdvanceWatchdog();
+  castQueueAdvanceKey = key;
+  castQueueAdvanceTimer = setTimeout(async () => {
+    castQueueAdvanceTimer = undefined;
+    try {
+      if (generation !== castSessionGeneration || !currentCastState.connected || !selectedTrack || selectedTrack.id !== trackId || trackChangeInProgress) return;
+      const latest = await window.hires.getCastState(false);
+      if (generation !== castSessionGeneration) return;
+      currentCastState = latest;
+      adoptRemoteCastTrack(latest.currentTrackId);
+      if (!latest.connected || latest.queueActive !== true || selectedTrack?.id !== trackId) return;
+      if (latest.currentTrackId && latest.currentTrackId !== trackId) return;
+      const duration = latest.duration ?? selectedTrack.durationSeconds;
+      const stillAtEnd = latest.idleReason === "FINISHED"
+        || (duration != null && (latest.currentTime ?? 0) >= duration - 0.25);
+      if (!stillAtEnd || latest.playerState === "BUFFERING") return;
+      autoAdvancedTrackId = trackId;
+      await playNext(true);
+    } catch (error) {
+      console.warn("Cast queue advance watchdog did not succeed", error);
+    } finally {
+      if (castQueueAdvanceKey === key) castQueueAdvanceKey = "";
+    }
+  }, 2_500);
+}
+
+function cancelCastQueueAdvanceWatchdog(): void {
+  if (castQueueAdvanceTimer) clearTimeout(castQueueAdvanceTimer);
+  castQueueAdvanceTimer = undefined;
+  castQueueAdvanceKey = "";
+}
+
+async function recoverInterruptedCastSession(deviceId: string, resumeAt: number): Promise<void> {
+  if (castTransportRecoveryInFlight || !selectedTrack) return;
+  castTransportRecoveryInFlight = true;
+  resetCastSessionTracking();
+  try {
+    currentCastState = await window.hires.connectCast(deviceId);
+    currentCastState = await castCurrentQueue(resumeAt);
+    autoAdvancedTrackId = undefined;
+    renderCastState();
+  } catch (error) {
+    console.warn("Automatic Cast control-session recovery did not succeed", error);
+  } finally {
+    castTransportRecoveryInFlight = false;
+  }
+}
+
+function resetCastSessionTracking(): void {
+  castSessionGeneration += 1;
+  cancelCastQueueAdvanceWatchdog();
+  if (castQueueSyncTimer) clearTimeout(castQueueSyncTimer);
+  castQueueSyncTimer = undefined;
+  if (castPrewarmTimer) clearTimeout(castPrewarmTimer);
+  castPrewarmTimer = undefined;
+  lastCastQueueSignature = "";
+  lastCastPrewarmSignature = "";
+  autoAdvancedTrackId = undefined;
 }
 
 function scheduleCastRefresh(delay?: number): void {
@@ -1834,6 +2076,7 @@ async function connectCast(device: CastDevice, button: HTMLButtonElement): Promi
   button.disabled = true;
   castStatus.textContent = t("connectingDevice", { name: device.name });
   try {
+    resetCastSessionTracking();
     currentCastState = await window.hires.connectCast(device.id);
     const localStartTime = player.dataset.trackId === selectedTrack?.id
       ? Math.max(0, player.currentTime || 0)
@@ -2613,7 +2856,7 @@ function restorePlaybackSession(): void {
     nowPlaylistButton.disabled = false;
     void applyPlayerAccent(track.artworkUrl);
   }
-  openLibraryView(session.view ?? "tracks");
+  openLibraryView(session.view ?? "tracks", true);
   updateRangeProgress(localVolume, player.volume, 1);
   updateQueueButtons();
 }
@@ -2661,9 +2904,20 @@ function scheduleCastPrewarm(): void {
   const signature = `${currentCastState.deviceId ?? "cast"}:${upcoming.map((track) => track.id).join("|")}`;
   if (signature === lastCastPrewarmSignature) return;
   lastCastPrewarmSignature = signature;
+  const generation = castSessionGeneration;
   castPrewarmTimer = setTimeout(() => {
     castPrewarmTimer = undefined;
-    void window.hires.prewarmCastTracks(upcoming).catch((error) => {
+    if (generation !== castSessionGeneration) return;
+    void window.hires.prewarmCastTracks(upcoming).then((prepared) => {
+      if (generation !== castSessionGeneration) return;
+      if (prepared > 0 && currentCastState.connected && currentCastState.queueActive === true) {
+        // Prepared URLs live in the main process. Force one differential queue
+        // sync so the receiver actually consumes those local files.
+        lastCastQueueSignature = "";
+        scheduleCastQueueSync();
+      }
+    }).catch((error) => {
+      if (generation !== castSessionGeneration) return;
       console.warn("No se pudo preparar la cola de Cast", error);
       if (lastCastPrewarmSignature === signature) lastCastPrewarmSignature = "";
     });

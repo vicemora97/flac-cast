@@ -26,6 +26,7 @@ Remove the SignPath acknowledgement from an unsigned prerelease only if the poli
 - [GNU GPL v3.0 or later license](https://github.com/vicemora97/flac-cast/blob/main/LICENSE)
 - [Third-party notices](https://github.com/vicemora97/flac-cast/blob/main/THIRD_PARTY_NOTICES.md)
 - [Source for this release](https://github.com/vicemora97/flac-cast/tree/vX.Y.Z)
+- [FFmpeg 6.1.1 source and platform-binary provenance](https://github.com/vicemora97/flac-cast/blob/main/THIRD_PARTY_NOTICES.md#ffmpeg-binary-and-source)
 
 ## Changes
 

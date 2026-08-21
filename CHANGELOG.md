@@ -8,6 +8,17 @@ All notable changes to Flac Cast are documented in this file.
 - Make list repeat contextual: it now loops the playlist, album, artist, or track list that started playback instead of always selecting the current album.
 - Keep the repeat selection stable across Cast track changes instead of allowing a receiver's transient `REPEAT_OFF` loading status to clear it.
 - Allow local builds inside OneDrive folders to overwrite generated artifacts when OneDrive temporarily denies deleting the `dist` directory.
+- Start clean uncached FLAC files directly while preparing the bounded upcoming window in the background, reducing first-play latency for NAS libraries.
+- Route prepared files into the receiver queue and update only changed future items instead of rebuilding the complete queue.
+- Learn successful delivery profiles per receiver and technical FLAC profile so future prewarming can prepare the proven compatible variant.
+- Reuse immutable prepared media through HTTP keep-alive, cache validators, and asynchronous file metadata reads while exposing response timing for diagnostics.
+- Reduce receiver volume polling without delaying Cast status updates.
+- Refresh local mDNS discovery in a short bounded burst when the Cast panel opens, avoiding the previous five-second empty-list wait after a late startup response.
+- Preserve track and position when the Cast control socket closes unexpectedly and perform one bounded automatic session reconstruction instead of immediately abandoning playback.
+- Add a delayed, state-verified queue watchdog that advances playback only when the receiver remains stuck on the same completed track, preserving native gapless transitions without leaving playback at the end.
+- Isolate each reconstructed Cast session from stale queue synchronization, prewarming, and end-of-track watchdog callbacks left by the interrupted session.
+- Keep receiver volume separate from Cast media-session volume so playback, queue, shuffle, and repeat updates no longer make the soundbar slider flash an incorrect value.
+- Add track context-menu shortcuts for opening the corresponding artist or album, plus browser-style Back and Forward library navigation with search and scroll restoration.
 
 ## [1.0.4] - 2026-08-20
 

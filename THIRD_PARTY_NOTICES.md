@@ -23,9 +23,12 @@ Production dependency packages retain their license files in the packaged applic
 
 - <https://github.com/eugeneware/ffmpeg-static/tree/b6.1.1>
 - <https://github.com/eugeneware/ffmpeg-static/releases/tag/b6.1.1>
+- <https://ffmpeg.org/releases/ffmpeg-6.1.1.tar.xz>
 - <https://github.com/FFmpeg/FFmpeg/tree/n6.1.1>
 
 The `ffmpeg-static` project documents the platform-specific binary providers and their build/source information. Anyone publishing a Flac Cast binary must keep the exact `package-lock.json`, this notice, the GPL license text, and equivalent network access to the corresponding Flac Cast and FFmpeg source for as long as that binary is offered.
+
+The upstream FFmpeg archive alone may not describe every optional codec or library enabled by a platform binary. A distributor must identify the exact binary shipped for each operating system, retain its `ffmpeg -version` configuration, and make the complete corresponding source and build information for FFmpeg and its covered linked components available. The binary-provider references used by `ffmpeg-static` are listed in its [`b6.1.1` source tree](https://github.com/eugeneware/ffmpeg-static/tree/b6.1.1#sources-of-the-binaries).
 
 ## Build-only components
 
