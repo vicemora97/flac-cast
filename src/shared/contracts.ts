@@ -130,6 +130,8 @@ export type HiresApi = {
   connectCast(deviceId: string): Promise<CastState>;
   castTrack(track: CastTrack, startTimeSeconds?: number): Promise<CastState>;
   castQueue(request: CastQueueRequest): Promise<CastState>;
+  updateCastQueue(request: CastQueueRequest): Promise<CastState>;
+  updateCastQueueModes(request: CastQueueRequest): Promise<CastState>;
   castCommand(command: "play" | "pause"): Promise<CastState>;
   castSeek(seconds: number): Promise<CastState>;
   castVolume(level: number): Promise<CastState>;

@@ -65,7 +65,7 @@ The footer provides Previous, Play/Pause, Next, Shuffle, Repeat, time, seek, and
 - **Previous** restarts the current track when playback is beyond five seconds; otherwise it returns to the previous track.
 - **Next** consumes the manual FIFO queue first, then resumes the scheduled queue.
 - **Shuffle** randomizes only the scheduled context.
-- **Repeat** cycles through off, album repeat, and track repeat.
+- **Repeat** cycles through off, current-list repeat, and track repeat. The current list is the playback context that started the session, such as a playlist, album, artist, or the visible track list.
 - The quality badge shows the current local file quality or effective Cast delivery quality.
 
 The now-playing title and artist lines have a compact width and scroll independently when their text is longer than the available area.

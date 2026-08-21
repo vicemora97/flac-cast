@@ -4,6 +4,11 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+- Update an active Cast queue in place when shuffle, repeat, or upcoming tracks change, avoiding a reload of the song currently playing.
+- Make list repeat contextual: it now loops the playlist, album, artist, or track list that started playback instead of always selecting the current album.
+- Keep the repeat selection stable across Cast track changes instead of allowing a receiver's transient `REPEAT_OFF` loading status to clear it.
+- Allow local builds inside OneDrive folders to overwrite generated artifacts when OneDrive temporarily denies deleting the `dist` directory.
+
 ## [1.0.4] - 2026-08-20
 
 ### Added

@@ -164,6 +164,7 @@ async function createWindow(): Promise<void> {
         api: typeof window.hires,
         chooseLibrary: typeof window.hires?.chooseLibrary,
         castQueue: typeof window.hires?.castQueue,
+        updateCastQueueModes: typeof window.hires?.updateCastQueueModes,
         prepareLocalTrack: typeof window.hires?.prepareLocalTrack,
         button: Boolean(document.querySelector('#choose-folder')),
         buttonDisabled: document.querySelector('#choose-folder')?.disabled,
@@ -351,6 +352,24 @@ ipcMain.handle("cast:queue", (_event, request: CastQueueRequest) => {
     castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
   }));
   return castController.castQueue({ ...request, tracks });
+});
+ipcMain.handle("cast:queue-update", (_event, request: CastQueueRequest) => {
+  const receiverHost = castController.getReceiverHost();
+  const tracks = request.tracks.map((track) => ({
+    ...track,
+    castUrl: mediaServer.routeForReceiver(track.castUrl, receiverHost),
+    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
+  }));
+  return castController.updateQueue({ ...request, tracks });
+});
+ipcMain.handle("cast:queue-modes", (_event, request: CastQueueRequest) => {
+  const receiverHost = castController.getReceiverHost();
+  const tracks = request.tracks.map((track) => ({
+    ...track,
+    castUrl: mediaServer.routeForReceiver(track.castUrl, receiverHost),
+    castArtworkUrl: mediaServer.routeForReceiver(track.castArtworkUrl, receiverHost)
+  }));
+  return castController.updateQueueModes({ ...request, tracks });
 });
 ipcMain.handle("cast:command", (_event, command: "play" | "pause") => castController.command(command));
 ipcMain.handle("cast:seek", (_event, seconds: number) => castController.seek(seconds));

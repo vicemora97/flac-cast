@@ -14,7 +14,7 @@ The application does not upload music to a cloud service. Local playback uses a 
 - Embedded artwork plus `cover`, `folder`, `front`, and `album` sidecar artwork.
 - Track, album, artist, playlist, and search views.
 - Artist, title, album, and audio-quality sorting with an independent ascending/descending order.
-- Local playback with previous, next, shuffle, album repeat, and track repeat.
+- Local playback with previous, next, shuffle, contextual list repeat, and track repeat.
 - A FIFO manually-added queue layered above the scheduled playback queue.
 - Synced lyrics through LRCLIB, with instrumental-track detection and an official LRCGET contribution path when a match is missing.
 - English default interface and an English/Spanish language selector.

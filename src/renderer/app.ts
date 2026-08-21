@@ -18,7 +18,7 @@ type Artist = {
 };
 
 type IconName = "play" | "pause" | "cast" | "music" | "folder" | "trash" | "playlist" | "plus" | "queue" | "more" | "edit" | "x";
-type RepeatMode = "off" | "album" | "track";
+type RepeatMode = "off" | "context" | "track";
 type LibraryView = "tracks" | "albums" | "artists" | "playlists" | "about";
 type TrackSort = "artist" | "title" | "album" | "quality";
 type SortDirection = "asc" | "desc";
@@ -1610,16 +1610,16 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
 
 function buildCastQueuePlan(): { tracks: Track[]; currentIndex: number } {
   if (!selectedTrack) return { tracks: [], currentIndex: 0 };
-  const previous = repeatMode === "album" ? [] : playbackHistory.slice(-5).map((entry) => entry.track);
+  const previous = repeatMode === "context" ? [] : playbackHistory.slice(-5).map((entry) => entry.track);
   let scheduled = playbackQueue.slice(Math.max(0, queueIndex + 1));
-  if (repeatMode === "album") {
+  if (repeatMode === "context") {
     const anchor = currentPlaybackSource === "manual" ? playbackQueue[queueIndex] : selectedTrack;
     if (anchor) {
-      const sameAlbum = (track: Track) => track.artist === anchor.artist && track.album === anchor.album;
-      const albumQueue = playbackQueue.filter(sameAlbum);
-      const source = albumQueue.length > 0 ? albumQueue : libraryTracks.filter(sameAlbum);
-      const anchorIndex = Math.max(0, source.findIndex((track) => track.id === anchor.id));
-      scheduled = [...source.slice(anchorIndex + 1), ...source.slice(0, anchorIndex + (currentPlaybackSource === "manual" ? 1 : 0))];
+      const anchorIndex = Math.max(0, playbackQueue.findIndex((track) => track.id === anchor.id));
+      scheduled = [
+        ...playbackQueue.slice(anchorIndex + 1),
+        ...playbackQueue.slice(0, anchorIndex + (currentPlaybackSource === "manual" ? 1 : 0))
+      ];
     }
   }
   const upcoming = [...manualQueue, ...scheduled];
@@ -1645,7 +1645,7 @@ async function castCurrentQueue(startTimeSeconds = 0): Promise<CastState> {
       tracks: plan.tracks,
       currentIndex: plan.currentIndex,
       startTimeSeconds,
-      repeatMode: repeatMode === "track" ? "single" : repeatMode === "album" ? "all" : "off"
+      repeatMode: repeatMode === "track" ? "single" : repeatMode === "context" ? "all" : "off"
     });
   } catch (error) {
     if (lastCastQueueSignature === signature) lastCastQueueSignature = "";
@@ -1663,11 +1663,19 @@ function scheduleCastQueueSync(): void {
   if (signature === lastCastQueueSignature) return;
   castQueueSyncTimer = setTimeout(() => {
     castQueueSyncTimer = undefined;
-    const currentTime = currentCastState.currentTime ?? 0;
-    void castCurrentQueue(currentTime).then((state) => {
+    const plan = buildCastQueuePlan();
+    lastCastQueueSignature = signature;
+    void window.hires.updateCastQueue({
+      tracks: plan.tracks,
+      currentIndex: plan.currentIndex,
+      repeatMode: repeatMode === "track" ? "single" : repeatMode === "context" ? "all" : "off"
+    }).then((state) => {
       currentCastState = state;
       renderCastState();
-    }).catch((error) => console.warn("Could not synchronize the Cast queue", error));
+    }).catch((error) => {
+      if (lastCastQueueSignature === signature) lastCastQueueSignature = "";
+      console.warn("Could not synchronize the Cast queue", error);
+    });
   }, 250);
 }
 
@@ -1697,7 +1705,10 @@ function adoptRemoteCastTrack(trackId: string | undefined): void {
   renderPlaybackQuality(track);
   renderTrackPlaybackState();
   void applyPlayerAccent(track.artworkUrl);
-  lastCastQueueSignature = repeatMode === "album" && manualIndex >= 0 ? "" : castQueueSignature();
+  // Receiver-side transitions change the rolling window. Rebuild only the
+  // future items in place so long contexts keep advancing and temporary
+  // manual entries do not become part of a repeated list.
+  lastCastQueueSignature = "";
   updateQueueButtons();
 }
 
@@ -1714,13 +1725,9 @@ async function refreshCastState(render = true): Promise<void> {
   try {
     currentCastState = await window.hires.getCastState(render);
     adoptRemoteCastTrack(currentCastState.currentTrackId);
-    if (currentCastState.repeatMode) {
-      const remoteRepeat = currentCastState.repeatMode === "single" ? "track" : currentCastState.repeatMode === "all" ? "album" : "off";
-      if (remoteRepeat !== repeatMode) {
-        repeatMode = remoteRepeat;
-        renderShuffleAndRepeatLabels();
-      }
-    }
+    // Repeat is a Flac Cast session preference. Receivers can briefly report
+    // REPEAT_OFF while loading a new queue item; treating that transient value
+    // as user intent made the repeat button turn itself off after track changes.
     if (currentCastState.playerState === "PLAYING") castAutoRecoveryKey = "";
     if (currentCastState.connected && currentCastState.playerState === "IDLE" && currentCastState.idleReason === "ERROR" && selectedTrack && !trackChangeInProgress) {
       const recoveryKey = `${currentCastState.deviceId ?? "cast"}:${selectedTrack.id}`;
@@ -2342,7 +2349,7 @@ async function playNext(automatic = false): Promise<void> {
   }
 
   if (currentPlaybackSource === "manual") {
-    const resumedIndex = queueIndex + 1;
+    const resumedIndex = repeatMode === "context" && queueIndex >= playbackQueue.length - 1 ? 0 : queueIndex + 1;
     const resumed = playbackQueue[resumedIndex];
     if (!resumed) {
       updateQueueButtons();
@@ -2354,14 +2361,12 @@ async function playNext(automatic = false): Promise<void> {
     return;
   }
 
-  if (repeatMode === "album") {
-    const albumQueue = getCurrentAlbumQueue();
-    const albumIndex = albumQueue.findIndex((track) => track.id === selectedTrack!.id);
-    const next = albumQueue[(Math.max(0, albumIndex) + 1) % albumQueue.length];
+  if (repeatMode === "context") {
+    const nextQueueIndex = playbackQueue.length > 0 ? (Math.max(0, queueIndex) + 1) % playbackQueue.length : -1;
+    const next = playbackQueue[nextQueueIndex];
     if (next) {
       rememberCurrentForPrevious();
-      const nextQueueIndex = playbackQueue.findIndex((track) => track.id === next.id);
-      if (nextQueueIndex >= 0) queueIndex = nextQueueIndex;
+      queueIndex = nextQueueIndex;
       if (!automatic) autoAdvancedTrackId = selectedTrack.id;
       await playTrack(next, playbackContext, true, "scheduled");
     }
@@ -2414,13 +2419,13 @@ async function playPrevious(): Promise<void> {
     return;
   }
 
-  if (repeatMode === "album") {
-    const albumQueue = getCurrentAlbumQueue();
-    const albumIndex = albumQueue.findIndex((track) => track.id === selectedTrack!.id);
-    const previous = albumQueue[(albumIndex - 1 + albumQueue.length) % albumQueue.length];
+  if (repeatMode === "context") {
+    const previousQueueIndex = playbackQueue.length > 0
+      ? (Math.max(0, queueIndex) - 1 + playbackQueue.length) % playbackQueue.length
+      : -1;
+    const previous = playbackQueue[previousQueueIndex];
     if (previous) {
-      const previousQueueIndex = playbackQueue.findIndex((track) => track.id === previous.id);
-      if (previousQueueIndex >= 0) queueIndex = previousQueueIndex;
+      queueIndex = previousQueueIndex;
       await playTrack(previous, playbackContext, true, "scheduled");
     }
     return;
@@ -2461,13 +2466,36 @@ function toggleShuffle(): void {
       queueIndex = playbackQueue.findIndex((track) => track.id === (scheduledAnchor ?? selectedTrack!).id);
     }
   }
+  syncCastQueueModesWithoutReload();
   updateQueueButtons();
 }
 
 function toggleRepeat(): void {
-  repeatMode = repeatMode === "off" ? "album" : repeatMode === "album" ? "track" : "off";
+  repeatMode = repeatMode === "off" ? "context" : repeatMode === "context" ? "track" : "off";
   renderShuffleAndRepeatLabels();
+  syncCastQueueModesWithoutReload();
   updateQueueButtons();
+}
+
+function syncCastQueueModesWithoutReload(): void {
+  if (!currentCastState.connected || !selectedTrack) return;
+  const plan = buildCastQueuePlan();
+  const signature = castQueueSignature();
+  lastCastQueueSignature = signature;
+  if (currentCastState.queueActive !== true) return;
+
+  const requestedRepeatMode = repeatMode;
+  void window.hires.updateCastQueueModes({
+    tracks: plan.tracks,
+    currentIndex: plan.currentIndex,
+    repeatMode: requestedRepeatMode === "track" ? "single" : requestedRepeatMode === "context" ? "all" : "off"
+  }).then((state) => {
+    currentCastState = state;
+    renderCastState();
+  }).catch((error) => {
+    if (lastCastQueueSignature === signature) lastCastQueueSignature = "";
+    console.warn("Could not update the Cast queue modes", error);
+  });
 }
 
 function renderShuffleAndRepeatLabels(): void {
@@ -2477,12 +2505,12 @@ function renderShuffleAndRepeatLabels(): void {
   shuffleButton.setAttribute("aria-label", shuffleEnabled ? t("shuffleEnabled") : t("enableShuffle"));
   repeatButton.classList.toggle("active", repeatMode !== "off");
   repeatButton.setAttribute("aria-pressed", String(repeatMode !== "off"));
-  repeatModeLabel.hidden = repeatMode === "off";
-  repeatModeLabel.textContent = repeatMode === "album" ? "A" : repeatMode === "track" ? "1" : "";
-  repeatButton.title = repeatMode === "album" ? t("repeatAlbum") : repeatMode === "track" ? t("repeatTrack") : t("repeat");
-  repeatButton.setAttribute("aria-label", repeatMode === "album"
+  repeatModeLabel.hidden = repeatMode !== "track";
+  repeatModeLabel.textContent = repeatMode === "track" ? "1" : "";
+  repeatButton.title = repeatMode === "context" ? t("repeatContext") : repeatMode === "track" ? t("repeatTrack") : t("repeat");
+  repeatButton.setAttribute("aria-label", repeatMode === "context"
     ? t("changeToTrackRepeat")
-    : repeatMode === "track" ? t("disableRepeat") : t("enableAlbumRepeat"));
+    : repeatMode === "track" ? t("disableRepeat") : t("enableContextRepeat"));
 }
 
 async function replayCurrentTrack(): Promise<void> {
@@ -2495,20 +2523,13 @@ async function replayCurrentTrack(): Promise<void> {
   await player.play();
 }
 
-function getCurrentAlbumQueue(): Track[] {
-  if (!selectedTrack) return [];
-  const sameAlbum = (track: Track) => track.artist === selectedTrack!.artist && track.album === selectedTrack!.album;
-  const queuedAlbum = playbackQueue.filter(sameAlbum);
-  return queuedAlbum.length > 0 ? queuedAlbum : libraryTracks.filter(sameAlbum);
-}
-
 function updateQueueButtons(): void {
   const hasTrack = Boolean(selectedTrack);
   previousTrackButton.disabled = !hasTrack;
-  const albumCanLoop = currentPlaybackSource === "scheduled" && repeatMode === "album" && getCurrentAlbumQueue().length > 0;
+  const contextCanLoop = repeatMode === "context" && playbackQueue.length > 0;
   const hasManualNext = manualQueue.length > 0;
   const hasScheduledNext = queueIndex >= -1 && queueIndex < playbackQueue.length - 1;
-  nextTrackButton.disabled = !hasTrack || (!hasManualNext && !albumCanLoop && !hasScheduledNext);
+  nextTrackButton.disabled = !hasTrack || (!hasManualNext && !contextCanLoop && !hasScheduledNext);
   renderQueue();
   scheduleCastPrewarm();
   updateTaskbarControls();
@@ -2525,7 +2546,7 @@ type SavedPlaybackSession = {
   queueIndex: number;
   source: PlaybackSource;
   shuffle: boolean;
-  repeat: RepeatMode;
+  repeat: RepeatMode | "album";
   currentTime: number;
   volume: number;
   view: LibraryView;
@@ -2569,7 +2590,9 @@ function restorePlaybackSession(): void {
   queueIndex = Math.max(-1, Math.min(session.queueIndex ?? -1, playbackQueue.length - 1));
   currentPlaybackSource = session.source === "manual" ? "manual" : "scheduled";
   shuffleEnabled = Boolean(session.shuffle);
-  repeatMode = session.repeat === "album" || session.repeat === "track" ? session.repeat : "off";
+  repeatMode = session.repeat === "context" || session.repeat === "album"
+    ? "context"
+    : session.repeat === "track" ? "track" : "off";
   renderShuffleAndRepeatLabels();
   const track = session.selectedTrackId ? byId.get(session.selectedTrackId) : undefined;
   if (track) {

@@ -6,7 +6,15 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const fromRoot = (...parts) => join(root, ...parts);
 
-await rm(fromRoot("dist"), { recursive: true, force: true });
+try {
+  await rm(fromRoot("dist"), { recursive: true, force: true });
+} catch (error) {
+  // OneDrive can leave a deny-delete ACL on hydrated folders while still
+  // allowing their files to be overwritten. The build emits a fixed set of
+  // artifacts below, so retaining the directory is safe in that situation.
+  if (error?.code !== "EPERM" && error?.code !== "EACCES") throw error;
+  console.warn(`Could not clean dist (${error.code}); overwriting build artifacts in place.`);
+}
 await mkdir(fromRoot("dist/main"), { recursive: true });
 await mkdir(fromRoot("dist/renderer"), { recursive: true });
 

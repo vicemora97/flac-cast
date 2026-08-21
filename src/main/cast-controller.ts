@@ -21,6 +21,7 @@ export class CastController {
   private lastLoadedContent?: { contentId: string; contentType: string };
   private recoveryInProgress = false;
   private queueAllowed = true;
+  private queueMutation = Promise.resolve();
 
   constructor(
     private readonly prepareFlac: FlacPreparer,
@@ -295,6 +296,134 @@ export class CastController {
     this.queueAllowed = false;
     const restored = await this.castTrack(current, startTime, false);
     this.state = { ...restored, queueActive: false };
+    return this.getState();
+  }
+
+  updateQueue(request: CastQueueRequest): Promise<CastState> {
+    const operation = this.queueMutation.then(() => this.updateQueueNow(request));
+    this.queueMutation = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  updateQueueModes(request: CastQueueRequest): Promise<CastState> {
+    const operation = this.queueMutation.then(() => this.updateQueueModesNow(request));
+    this.queueMutation = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async updateQueueModesNow(request: CastQueueRequest): Promise<CastState> {
+    const player = this.player;
+    if (!player || !this.state.connected) throw new Error("No hay una sesión Chromecast activa");
+    if (!this.state.queueActive) return this.getState();
+
+    const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+      player.getStatus((error, result) => {
+        if (error) reject(error);
+        else resolve((result ?? {}) as CastMediaStatus);
+      });
+    }), 3_000, "Chromecast no respondió al consultar la cola");
+    if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaban los controles de cola");
+
+    const currentItemId = status.currentItemId;
+    const items = status.items ?? [];
+    const currentPosition = currentItemId == null ? -1 : items.findIndex((item) => item.itemId === currentItemId);
+    if (currentPosition >= 0) {
+      // Reorder only already-loaded future items. Cast's native shuffle update
+      // can reload the item at the current position, which creates an audible
+      // interruption on some audio receivers.
+      const desiredIds = request.tracks
+        .slice(Math.max(0, request.currentIndex + 1))
+        .map((track) => track.id);
+      const desiredPosition = new Map(desiredIds.map((trackId, index) => [trackId, index]));
+      const future = items.slice(currentPosition + 1).filter((item): item is typeof item & { itemId: number } => item.itemId != null);
+      const reordered = [...future].sort((left, right) => {
+        const leftPosition = desiredPosition.get(left.media?.customData?.trackId ?? "") ?? Number.MAX_SAFE_INTEGER;
+        const rightPosition = desiredPosition.get(right.media?.customData?.trackId ?? "") ?? Number.MAX_SAFE_INTEGER;
+        return leftPosition - rightPosition;
+      });
+      const changed = future.some((item, index) => item.itemId !== reordered[index]?.itemId);
+      if (changed && reordered.length > 1) {
+        await withTimeout(new Promise<void>((resolve, reject) => {
+          player.queueReorder(reordered.map((item) => item.itemId), {}, (error) => error ? reject(error) : resolve());
+        }), 3_000, "Chromecast no respondió al reordenar la cola");
+        if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se reordenaba la cola");
+      }
+    }
+
+    // Repeat mode is a queue property and can be changed without replacing the
+    // current media item.
+    const updated = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+      player.queueUpdate([], { repeatMode: castRepeatMode(request.repeatMode) }, (error, result) => {
+        if (error) reject(error);
+        else resolve((result ?? {}) as CastMediaStatus);
+      });
+    }), 3_000, "Chromecast no respondió al actualizar la repetición");
+    if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la repetición");
+    this.applyStatus(updated);
+    this.state = { ...this.state, queueActive: true };
+    return this.getState();
+  }
+
+  private async updateQueueNow(request: CastQueueRequest): Promise<CastState> {
+    const player = this.player;
+    if (!player || !this.state.connected) throw new Error("No hay una sesión Chromecast activa");
+    if (!this.state.queueActive) return this.getState();
+
+    const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+      player.getStatus((error, result) => {
+        if (error) reject(error);
+        else resolve((result ?? {}) as CastMediaStatus);
+      });
+    }), 3_000, "Chromecast no respondió al consultar la cola");
+    if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
+
+    const currentItemId = status.currentItemId;
+    if (currentItemId == null) throw new Error("Chromecast no informó el elemento actual de la cola");
+    const obsoleteItemIds = (status.items ?? [])
+      .map((item) => item.itemId)
+      .filter((itemId): itemId is number => itemId != null && itemId !== currentItemId);
+
+    if (obsoleteItemIds.length > 0) {
+      await withTimeout(new Promise<void>((resolve, reject) => {
+        player.queueRemove(obsoleteItemIds, {}, (error) => error ? reject(error) : resolve());
+      }), 3_000, "Chromecast no respondió al actualizar la cola");
+      if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
+    }
+
+    const currentIndex = Math.max(0, Math.min(request.tracks.length - 1, request.currentIndex));
+    const futureItems = request.tracks.slice(currentIndex + 1, 40).flatMap((track, index) => {
+      if (!track.castUrl) return [];
+      return [{
+        media: {
+          contentId: track.castUrl,
+          contentType: directContentTypes(track)[0] ?? "application/octet-stream",
+          streamType: "BUFFERED",
+          duration: track.durationSeconds,
+          metadata: createMetadata(track),
+          customData: { trackId: track.id }
+        },
+        autoplay: true,
+        startTime: 0,
+        preloadTime: index < 5 ? 10 : 0
+      }];
+    });
+
+    if (futureItems.length > 0) {
+      await withTimeout(new Promise<void>((resolve, reject) => {
+        player.queueInsert(futureItems, {}, (error) => error ? reject(error) : resolve());
+      }), 3_000, "Chromecast no respondió al insertar la nueva cola");
+      if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
+    }
+
+    const updated = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+      player.queueUpdate([], { repeatMode: castRepeatMode(request.repeatMode) }, (error, result) => {
+        if (error) reject(error);
+        else resolve((result ?? {}) as CastMediaStatus);
+      });
+    }), 3_000, "Chromecast no respondió al actualizar el modo de repetición");
+    if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
+    this.applyStatus(updated);
+    this.state = { ...this.state, queueActive: true };
     return this.getState();
   }
 
