@@ -19,6 +19,8 @@ Thank you for helping improve Flac Cast. Bug reports, documentation, translation
 
 Native installers must be tested on their target operating system. Do not commit `node_modules`, `dist`, `out`, user libraries, caches, certificates, signing tokens, or locally built installers.
 
+Public forks and modified distributions must follow [TRADEMARKS.md](TRADEMARKS.md), including using a distinct product name and icon where retaining the official branding could confuse users about the publisher.
+
 ## Licensing of contributions
 
 Flac Cast is licensed under the GNU General Public License version 3 or later. By submitting a contribution, you confirm that you have the right to provide it and agree that it will be distributed under `GPL-3.0-or-later`. Do not submit proprietary code or content copied from a source whose license is incompatible with the project.

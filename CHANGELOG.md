@@ -4,6 +4,10 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added a trademark policy that distinguishes the GPL-licensed source from the official Flac Cast name, icon, and release identity.
+
 ## [1.0.5] - 2026-08-21
 
 ### Added

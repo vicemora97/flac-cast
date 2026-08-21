@@ -4,4 +4,6 @@ The Flac Cast application icon, Windows thumbnail-toolbar icons, and their PNG/I
 
 The inline SVG interface symbols in `src/renderer/index.html` are part of the Flac Cast source and are distributed under the same `GPL-3.0-or-later` license.
 
+The source license does not grant permission to use the Flac Cast name or official visual identity to imply that a modified build is an official release. See [TRADEMARKS.md](TRADEMARKS.md).
+
 Album covers, playlist images, music metadata, and synchronized lyrics displayed at runtime belong to users or their respective copyright holders. They are not included in the source repository or official project branding and are not relicensed by Flac Cast.

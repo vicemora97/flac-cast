@@ -92,6 +92,7 @@ This directory contains settings, the library index, deduplicated artwork, and t
 - [Code signing policy](docs/CODE_SIGNING_POLICY.md)
 - [Open-source release checklist](docs/OPEN_SOURCE_RELEASE.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
+- [Trademark policy](TRADEMARKS.md)
 - [Asset provenance](ASSETS.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Changelog](CHANGELOG.md)
@@ -103,6 +104,8 @@ Copyright (C) 2026 Flac Cast contributors.
 Flac Cast is free software licensed under the [GNU General Public License version 3 or later](LICENSE). You may use, study, modify, and redistribute it under that license. Distributed builds are provided without warranty. Third-party components remain under their respective terms; see [third-party notices](THIRD_PARTY_NOTICES.md).
 
 The `"private": true` package-manifest field only prevents accidental publication to the npm registry. It does not make this GPL-licensed repository proprietary.
+
+The GPL licenses the source code, not the right to present a modified build as an official release. Forks and redistributors must follow the [trademark policy](TRADEMARKS.md) when using the Flac Cast name, icon, or release branding.
 
 ## Code signing policy
 

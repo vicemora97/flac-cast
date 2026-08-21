@@ -80,7 +80,7 @@ The project is preparing for SignPath Foundation. Follow [the open-source releas
 6. Create a GitHub release from that tag and paste the corresponding changelog section.
    Start from [the release-notes template](RELEASE_NOTES_TEMPLATE.md) so signing, privacy, license, and source links are not omitted.
 7. Attach native artifacts and their SHA-256 checksum files.
-8. Link the **Code signing policy**, privacy policy, license, source tag, third-party notices, and the exact FFmpeg source/build provenance for every packaged platform binary in the release description.
+8. Link the **Code signing policy**, privacy policy, license, trademark policy, source tag, third-party notices, and the exact FFmpeg source/build provenance for every packaged platform binary in the release description.
 9. Mark unsigned builds as a prerelease until signing and platform reputation requirements are addressed.
 
 Keep a release as a draft until all advertised native artifacts come from the tagged commit. Publish one release containing the Windows, macOS, and Linux downloads so visitors can choose their operating system from a single page.

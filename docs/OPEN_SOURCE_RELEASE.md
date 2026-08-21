@@ -16,7 +16,8 @@ The repository must be public before a SignPath Foundation application can be ev
 2. Change the repository to **Public** and confirm the repository name.
 3. Check the public page in a private browser window.
 4. Confirm that `LICENSE`, `PRIVACY.md`, `SECURITY.md`, `THIRD_PARTY_NOTICES.md`, this documentation, source files, build scripts, and package lock are visible.
-5. Confirm that no secrets, music files, local paths, certificates, private names, or generated installers exist anywhere in the visible Git history.
+5. Confirm that `TRADEMARKS.md` is visible and that official release pages use the canonical project name and repository.
+6. Confirm that no secrets, music files, local paths, certificates, private names, or generated installers exist anywhere in the visible Git history.
 
 Changing visibility is irreversible from the perspective of disclosure: even if the repository is made private later, assume every published commit has been copied.
 

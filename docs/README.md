@@ -29,4 +29,4 @@ This directory documents the current implementation of Flac Cast. It is intended
 
 Flac Cast is a local-first audio player. It reads only user-selected libraries, stores its index locally, and serves explicitly registered media files through an ephemeral HTTP server. It is not a music catalog service, cloud locker, or general-purpose media server.
 
-Repository-level policies live at the project root: [license](../LICENSE), [privacy](../PRIVACY.md), [security](../SECURITY.md), [contributing](../CONTRIBUTING.md), [governance](../GOVERNANCE.md), [code of conduct](../CODE_OF_CONDUCT.md), [third-party notices](../THIRD_PARTY_NOTICES.md), and [asset provenance](../ASSETS.md).
+Repository-level policies live at the project root: [license](../LICENSE), [privacy](../PRIVACY.md), [security](../SECURITY.md), [contributing](../CONTRIBUTING.md), [governance](../GOVERNANCE.md), [code of conduct](../CODE_OF_CONDUCT.md), [third-party notices](../THIRD_PARTY_NOTICES.md), [trademark policy](../TRADEMARKS.md), and [asset provenance](../ASSETS.md).
