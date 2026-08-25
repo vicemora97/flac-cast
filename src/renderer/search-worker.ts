@@ -61,17 +61,24 @@ function normalizeSearchText(value: string): string {
     .trim();
 }
 
-function createComparator(sort: "artist" | "title" | "album" | "quality", direction: "asc" | "desc", collator: Intl.Collator): (left: IndexedTrack, right: IndexedTrack) => number {
+function createComparator(sort: "artist" | "title" | "album" | "quality" | "added", direction: "asc" | "desc", collator: Intl.Collator): (left: IndexedTrack, right: IndexedTrack) => number {
   const byArtist = (left: IndexedTrack, right: IndexedTrack) => collator.compare(left.artist, right.artist)
     || collator.compare(left.title, right.title)
+    || collator.compare(left.album, right.album);
+  const byTitle = (left: IndexedTrack, right: IndexedTrack) => collator.compare(left.title, right.title)
+    || collator.compare(left.artist, right.artist)
     || collator.compare(left.album, right.album);
   const comparator = sort === "quality"
     ? (left: IndexedTrack, right: IndexedTrack) => {
       const quality = (left.bitsPerSample ?? 0) - (right.bitsPerSample ?? 0)
-      || (left.sampleRate ?? 0) - (right.sampleRate ?? 0)
-      || (left.bitrate ?? 0) - (right.bitrate ?? 0);
-      return (direction === "desc" ? -quality : quality) || byArtist(left, right);
+      || (left.sampleRate ?? 0) - (right.sampleRate ?? 0);
+      return (direction === "desc" ? -quality : quality) || byTitle(left, right);
     }
+    : sort === "added"
+      ? (left: IndexedTrack, right: IndexedTrack) => {
+        const added = (left.addedAtMs ?? 0) - (right.addedAtMs ?? 0);
+        return (direction === "desc" ? -added : added) || byTitle(left, right);
+      }
     : sort === "title"
       ? (left: IndexedTrack, right: IndexedTrack) => collator.compare(left.title, right.title)
       || collator.compare(left.artist, right.artist)
@@ -82,5 +89,5 @@ function createComparator(sort: "artist" | "title" | "album" | "quality", direct
           || collator.compare(left.title, right.title)
         : byArtist;
   const factor = direction === "desc" ? -1 : 1;
-  return (left, right) => sort === "quality" ? comparator(left, right) : factor * comparator(left, right);
+  return (left, right) => sort === "quality" || sort === "added" ? comparator(left, right) : factor * comparator(left, right);
 }

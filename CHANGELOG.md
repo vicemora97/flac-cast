@@ -4,6 +4,21 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-08-25
+
+### Added
+
+- Added recently-added sorting based on the first time Flac Cast discovers each file, with newest-first and oldest-first order options.
+
+### Changed
+
+- Audio-quality groups now use track title A–Z as their stable secondary order.
+
+### Fixed
+
+- Retried Cast queue synchronization after a track transition so FIFO tracks added while the receiver was loading cannot be skipped by the scheduled queue.
+- Inserted new Cast FIFO entries directly before the scheduled queue, kept a valid next item during receiver updates, and prevented concurrent advances from consuming a queued track without starting it.
+
 ## [1.0.6] - 2026-08-21
 
 ### Added
@@ -125,7 +140,8 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
-[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/vicemora97/flac-cast/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/vicemora97/flac-cast/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/vicemora97/flac-cast/compare/2de1eb9...v1.0.5
 [1.0.4]: https://github.com/vicemora97/flac-cast/compare/v1.0.3...2de1eb9

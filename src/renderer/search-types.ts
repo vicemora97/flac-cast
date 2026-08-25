@@ -1,4 +1,4 @@
-export type SearchSort = "artist" | "title" | "album" | "quality";
+export type SearchSort = "artist" | "title" | "album" | "quality" | "added";
 export type SearchDirection = "asc" | "desc";
 
 export type SearchTrackRecord = {
@@ -9,6 +9,7 @@ export type SearchTrackRecord = {
   bitsPerSample?: number;
   sampleRate?: number;
   bitrate?: number;
+  addedAtMs?: number;
 };
 
 export type SearchWorkerRequest =

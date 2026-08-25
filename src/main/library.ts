@@ -23,12 +23,13 @@ type CachedTrack = {
   contentType?: string;
   trackNumber?: number;
   discNumber?: number;
+  addedAtMs?: number;
   artwork?: CachedArtwork;
 };
 type CachedLibrary = { folder: string; tracks: CachedTrack[] };
 type LibraryCache = { version: 2; libraries: CachedLibrary[] };
 type LegacyLibraryCache = { version: 1; folder: string; tracks: CachedTrack[] };
-type AudioFile = { filePath: string; fileSize: number; modifiedMs: number };
+type AudioFile = { filePath: string; fileSize: number; modifiedMs: number; filesystemCreatedMs: number };
 type ArtworkData = { data: Uint8Array; format: string };
 type ArtworkEndpoint = { localUrl: string; castUrl?: string };
 type LibraryRefresh = { tracks: Track[]; changed: boolean };
@@ -94,12 +95,16 @@ export class LibraryManager {
     const previousByPath = new Map(previous?.tracks.map((track) => [track.filePath, track]));
     const externalArtwork = new Map<string, Promise<ArtworkData | undefined>>();
     const records: CachedTrack[] = [];
+    const discoveredAtMs = Date.now();
     for (const file of files) {
       const cached = previousByPath.get(file.filePath);
-      if (cached && cached.fileSize === file.fileSize && cached.modifiedMs === file.modifiedMs) records.push(cached);
+      const addedAtMs = cached?.addedAtMs ?? (cached ? file.filesystemCreatedMs : discoveredAtMs);
+      if (cached && cached.fileSize === file.fileSize && cached.modifiedMs === file.modifiedMs) {
+        records.push(cached.addedAtMs == null ? { ...cached, addedAtMs } : cached);
+      }
       else {
         try {
-          records.push(await this.readTrack(file, externalArtwork));
+          records.push(await this.readTrack(file, externalArtwork, addedAtMs));
         } catch (error) {
           console.warn(`No se pudo leer ${file.filePath}`, error);
         }
@@ -115,11 +120,17 @@ export class LibraryManager {
     return { tracks: await this.materialize(records), changed: true };
   }
 
-  private async readTrack(file: AudioFile, externalArtwork: Map<string, Promise<ArtworkData | undefined>>): Promise<CachedTrack> {
+  private async readTrack(
+    file: AudioFile,
+    externalArtwork: Map<string, Promise<ArtworkData | undefined>>,
+    addedAtMs: number
+  ): Promise<CachedTrack> {
     const metadata = await parseFile(file.filePath, { duration: true, skipCovers: false });
     const picture = metadata.common.picture?.[0] ?? await findExternalArtwork(dirname(file.filePath), externalArtwork);
     return {
-      ...file,
+      filePath: file.filePath,
+      fileSize: file.fileSize,
+      modifiedMs: file.modifiedMs,
       id: createHash("sha256").update(file.filePath).digest("hex").slice(0, 16),
       title: metadata.common.title ?? basename(file.filePath, extname(file.filePath)),
       artist: metadata.common.artist ?? "Unknown artist",
@@ -133,6 +144,7 @@ export class LibraryManager {
       contentType: contentTypeForExtension(extname(file.filePath)),
       trackNumber: metadata.common.track.no ?? undefined,
       discNumber: metadata.common.disk.no ?? undefined,
+      addedAtMs,
       artwork: picture ? await this.persistArtwork(picture.data, picture.format) : undefined
     };
   }
@@ -158,6 +170,7 @@ export class LibraryManager {
         bitrate: record.bitrate, fileExtension: record.fileExtension ?? extname(record.filePath).toLowerCase(),
         contentType: record.contentType ?? contentTypeForExtension(extname(record.filePath)),
         trackNumber: record.trackNumber, discNumber: record.discNumber,
+        addedAtMs: record.addedAtMs,
         artworkUrl: artwork?.localUrl, castArtworkUrl: artwork?.castUrl,
         localUrl: media.localUrl, castUrl: media.castUrl
       } satisfies Track;
@@ -242,7 +255,10 @@ async function findAudioFiles(folder: string): Promise<AudioFile[]> {
     if (entry.isDirectory()) result.push(...await findAudioFiles(filePath));
     else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
       const details = await stat(filePath);
-      result.push({ filePath, fileSize: details.size, modifiedMs: details.mtimeMs });
+      const filesystemCreatedMs = validFileTimestamp(details.birthtimeMs)
+        ?? validFileTimestamp(details.ctimeMs)
+        ?? details.mtimeMs;
+      result.push({ filePath, fileSize: details.size, modifiedMs: details.mtimeMs, filesystemCreatedMs });
     }
   }
   return result;
@@ -278,8 +294,12 @@ function sameCachedTracks(a: CachedTrack[], b: CachedTrack[]): boolean {
     return other != null
       && track.filePath === other.filePath
       && track.fileSize === other.fileSize
-      && track.modifiedMs === other.modifiedMs;
+      && track.modifiedMs === other.modifiedMs
+      && track.addedAtMs === other.addedAtMs;
   });
 }
 function normalizeFolderKey(folder: string): string { return folder.replace(/[\\/]+$/, "").toLocaleLowerCase(); }
+function validFileTimestamp(value: number): number | undefined {
+  return Number.isFinite(value) && value > 0 && value <= Date.now() + 86_400_000 ? value : undefined;
+}
 function isAlreadyExists(error: unknown): boolean { return error instanceof Error && "code" in error && error.code === "EEXIST"; }

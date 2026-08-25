@@ -32,9 +32,11 @@ If embedded artwork is absent, it looks for `cover`, `folder`, `front`, or `albu
 
 ### Tracks
 
-The Tracks tab displays every track with artwork, title, artist, album, technical quality, and duration. The first selector chooses artist, track title, album, or technical quality. The independent Order selector chooses A–Z/Z–A for textual fields or low-to-high/high-to-low for quality.
+The Tracks tab displays every track with artwork, title, artist, album, technical quality, and duration. The first selector chooses artist, track title, album, technical quality, or when the file was recently added. The independent Order selector chooses A–Z/Z–A for textual fields, low-to-high/high-to-low for quality, or oldest/newest first for recently added tracks.
 
-Quality sorting compares bit depth first, then sample rate. For example, 24-bit/44.1 kHz appears before 16-bit/96 kHz because bit depth is the primary key.
+Quality sorting compares bit depth first, then sample rate. Tracks with the same technical quality are ordered by track title A–Z; the compressed bitrate does not split a FLAC quality group. For example, every 24-bit/192 kHz track is grouped and alphabetized before the next lower quality group when using high-to-low order.
+
+Recently-added sorting records when Flac Cast first discovers a new path during a library scan. Editing tags or audio metadata does not make an existing track new. For cache records created by older Flac Cast versions, the first refresh seeds this value from the file-system creation time when available, falling back to another file timestamp. File systems do not expose a universal “copied into this folder” timestamp, so this migration is an approximation; future additions use the stable first-discovered time.
 
 ### Albums
 

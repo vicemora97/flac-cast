@@ -58,7 +58,7 @@ The renderer is context-isolated, has Node integration disabled, and runs with E
 
 ### Background search index
 
-`src/renderer/search-worker.ts` owns a compact, in-memory index containing only each track ID, title, artist, album, bit depth, sample rate, and bitrate. Text is normalized once when a track is added or changed: Unicode accents are removed, case is folded, and punctuation becomes spaces. Searches therefore avoid repeatedly normalizing the full library on the renderer thread.
+`src/renderer/search-worker.ts` owns a compact, in-memory index containing only each track ID, title, artist, album, bit depth, sample rate, bitrate, and first-discovered timestamp. Text is normalized once when a track is added or changed: Unicode accents are removed, case is folded, and punctuation becomes spaces. Searches therefore avoid repeatedly normalizing the full library on the renderer thread.
 
 The renderer sends incremental synchronization messages to the worker. Unchanged records are identified by lightweight signatures and are not resent; removed tracks are deleted explicitly. The worker filters and sorts matches away from the UI thread, then returns stable track IDs. A 90 ms input debounce avoids obsolete work while typing.
 
@@ -70,9 +70,9 @@ The search index is intentionally not another disk database. At launch it is reb
 
 ### LibraryManager
 
-`LibraryManager` recursively scans supported FLAC, WAV, MP3, MP4-audio, AAC, Ogg, Opus, and AIFF extensions, reads metadata with `music-metadata`, and stores a cache record containing path, file size, modification time, container MIME type, tags, technical format data, track/disc numbers, and artwork references.
+`LibraryManager` recursively scans supported FLAC, WAV, MP3, MP4-audio, AAC, Ogg, Opus, and AIFF extensions, reads metadata with `music-metadata`, and stores a cache record containing path, file size, modification time, first-discovered time, container MIME type, tags, technical format data, track/disc numbers, and artwork references.
 
-On refresh, unchanged files reuse their previous records. Only new or modified files are reparsed. Records from multiple libraries are normalized, deduplicated by path, and materialized as temporary HTTP URLs.
+On refresh, unchanged files reuse their previous records. Only new or modified files are reparsed. The first-discovered time remains stable across metadata edits; legacy records are seeded once from available file-system timestamps. Records from multiple libraries are normalized, deduplicated by path, and materialized as temporary HTTP URLs.
 
 ### LibraryWatcher
 

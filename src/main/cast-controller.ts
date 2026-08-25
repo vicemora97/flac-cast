@@ -405,19 +405,6 @@ export class CastController {
       else missingTracks.push(track);
     }
 
-    const obsoleteItemIds = [
-      ...pastItems.slice(0, Math.max(0, pastItems.length - 5)),
-      ...existingFuture.filter((item) => item.itemId != null && !usedItemIds.has(item.itemId))
-    ].flatMap((item) => item.itemId ?? []);
-
-    if (obsoleteItemIds.length > 0) {
-      await withTimeout(new Promise<void>((resolve, reject) => {
-        player.queueRemove(obsoleteItemIds, {}, (error) => error ? reject(error) : resolve());
-      }), 3_000, "Chromecast no respondió al actualizar la cola");
-      if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
-      status = await this.readQueueStatus(player);
-    }
-
     if (missingTracks.length > 0) {
       const futureItems = missingTracks.map((track, index) => ({
         media: {
@@ -432,11 +419,56 @@ export class CastController {
         startTime: 0,
         preloadTime: suggestedPreloadTime(track, index)
       }));
+      // Insert new entries before the first retained future item instead of
+      // appending them and relying solely on QUEUE_REORDER. Some audio-only
+      // receivers acknowledge reordering but keep the appended item at the
+      // end, which made a manually queued FIFO track get skipped.
+      const firstRetainedFuture = existingFuture.find((item) => item.itemId != null && usedItemIds.has(item.itemId));
       await withTimeout(new Promise<void>((resolve, reject) => {
-        player.queueInsert(futureItems, {}, (error) => error ? reject(error) : resolve());
+        player.queueInsert(futureItems, { insertBefore: firstRetainedFuture?.itemId }, (error) => error ? reject(error) : resolve());
       }), 3_000, "Chromecast no respondió al insertar la nueva cola");
       if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
       status = await this.readQueueStatus(player);
+      if (status.currentItemId !== currentItemId) {
+        this.applyStatus(status);
+        this.state = { ...this.state, queueActive: true };
+        return this.getState();
+      }
+    }
+
+    // Remove stale entries only after their replacements exist. This keeps a
+    // valid next item available if the current track ends during a queue sync.
+    const currentItems = status.items ?? [];
+    const currentPositionAfterInsert = currentItems.findIndex((item) => item.itemId === currentItemId);
+    const currentFutureAfterInsert = currentPositionAfterInsert >= 0 ? currentItems.slice(currentPositionAfterInsert + 1) : [];
+    const desiredKeys = new Map<string, number>();
+    for (const track of desiredFuture) {
+      const key = `${track.id}\0${track.castUrl}`;
+      desiredKeys.set(key, (desiredKeys.get(key) ?? 0) + 1);
+    }
+    const obsoleteFutureIds: number[] = [];
+    for (const item of currentFutureAfterInsert) {
+      if (item.itemId == null) continue;
+      const key = `${item.media?.customData?.trackId ?? ""}\0${item.media?.contentId ?? ""}`;
+      const remaining = desiredKeys.get(key) ?? 0;
+      if (remaining > 0) desiredKeys.set(key, remaining - 1);
+      else obsoleteFutureIds.push(item.itemId);
+    }
+    const obsoleteItemIds = [
+      ...pastItems.slice(0, Math.max(0, pastItems.length - 5)).flatMap((item) => item.itemId ?? []),
+      ...obsoleteFutureIds
+    ];
+    if (obsoleteItemIds.length > 0) {
+      await withTimeout(new Promise<void>((resolve, reject) => {
+        player.queueRemove(obsoleteItemIds, {}, (error) => error ? reject(error) : resolve());
+      }), 3_000, "Chromecast no respondió al actualizar la cola");
+      if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
+      status = await this.readQueueStatus(player);
+      if (status.currentItemId !== currentItemId) {
+        this.applyStatus(status);
+        this.state = { ...this.state, queueActive: true };
+        return this.getState();
+      }
     }
 
     const refreshedItems = status.items ?? [];

@@ -27,7 +27,7 @@ Settings writes are serialized and use temporary-file replacement. A temporary s
 
 ### `library-cache.json`
 
-Contains the per-library metadata index, including full source paths, file size, modification time, tags, duration, technical audio data, track/disc numbers, and artwork-cache references.
+Contains the per-library metadata index, including full source paths, file size, modification time, first-discovered time, tags, duration, technical audio data, track/disc numbers, and artwork-cache references.
 
 This file is local and can reveal music filenames and NAS paths to anyone who can access the Windows profile.
 

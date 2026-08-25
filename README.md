@@ -13,7 +13,7 @@ The application does not upload music to a cloud service. Local playback uses a 
 - Recursive FLAC, WAV, MP3, M4A/ALAC, AAC, Ogg, Opus, and AIFF indexing with an incremental metadata cache.
 - Embedded artwork plus `cover`, `folder`, `front`, and `album` sidecar artwork.
 - Track, album, artist, playlist, and search views, with Back/Forward navigation and direct artist/album shortcuts from each track menu.
-- Artist, title, album, and audio-quality sorting with an independent ascending/descending order.
+- Artist, title, album, audio-quality, and recently-added sorting with an independent ascending/descending order.
 - Local playback with previous, next, shuffle, contextual list repeat, and track repeat.
 - A FIFO manually-added queue layered above the scheduled playback queue.
 - Synced lyrics through LRCLIB, with instrumental-track detection and an official LRCGET contribution path when a match is missing.

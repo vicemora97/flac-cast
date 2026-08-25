@@ -20,7 +20,7 @@ type Artist = {
 type IconName = "play" | "pause" | "cast" | "music" | "folder" | "trash" | "playlist" | "plus" | "queue" | "more" | "edit" | "x" | "back" | "forward" | "album" | "artist";
 type RepeatMode = "off" | "context" | "track";
 type LibraryView = "tracks" | "albums" | "artists" | "playlists" | "about";
-type TrackSort = "artist" | "title" | "album" | "quality";
+type TrackSort = "artist" | "title" | "album" | "quality" | "added";
 type SortDirection = "asc" | "desc";
 type PlaybackSource = "scheduled" | "manual";
 type PlaybackHistoryEntry = { track: Track; source: PlaybackSource; scheduledIndex: number };
@@ -206,7 +206,12 @@ trackSortSelect.value = trackSort;
 trackOrderSelect.value = trackSortDirection;
 renderSortDirectionOptions();
 trackSortSelect.addEventListener("change", () => {
-  trackSort = normalizeTrackSort(trackSortSelect.value);
+  const nextSort = normalizeTrackSort(trackSortSelect.value);
+  if (nextSort === "added" && trackSort !== "added") {
+    trackSortDirection = "desc";
+    localStorage.setItem("flac-cast-track-sort-direction", trackSortDirection);
+  }
+  trackSort = nextSort;
   localStorage.setItem("flac-cast-track-sort", trackSort);
   renderSortDirectionOptions();
   if (searchQuery) showSearchResults();
@@ -579,7 +584,7 @@ function syncSearchIndex(tracks: Track[]): void {
   const nextSignatures = new Map<string, string>();
   const upsert: SearchTrackRecord[] = [];
   tracks.forEach((track) => {
-    const signature = `${track.title}\0${track.artist}\0${track.album}\0${track.bitsPerSample ?? ""}\0${track.sampleRate ?? ""}\0${track.bitrate ?? ""}`;
+    const signature = `${track.title}\0${track.artist}\0${track.album}\0${track.bitsPerSample ?? ""}\0${track.sampleRate ?? ""}\0${track.bitrate ?? ""}\0${track.addedAtMs ?? ""}`;
     nextSignatures.set(track.id, signature);
     if (searchTrackSignatures.get(track.id) !== signature) {
       upsert.push({
@@ -589,7 +594,8 @@ function syncSearchIndex(tracks: Track[]): void {
         album: track.album,
         bitsPerSample: track.bitsPerSample,
         sampleRate: track.sampleRate,
-        bitrate: track.bitrate
+        bitrate: track.bitrate,
+        addedAtMs: track.addedAtMs
       });
     }
   });
@@ -901,7 +907,8 @@ function sameLibrary(a: Track[], b: Track[]): boolean {
       && track.sampleRate === other.sampleRate
       && track.bitsPerSample === other.bitsPerSample
       && track.trackNumber === other.trackNumber
-      && track.discNumber === other.discNumber;
+      && track.discNumber === other.discNumber
+      && track.addedAtMs === other.addedAtMs;
   });
 }
 
@@ -1736,6 +1743,11 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
     await playLocalTrack(track);
   } finally {
     trackChangeInProgress = false;
+    // Queue edits made while Cast was loading the current track are rendered
+    // immediately, but their receiver sync is deliberately deferred above.
+    // Re-run the queue update once the transition is stable so manually added
+    // FIFO items cannot be skipped in favor of the old scheduled Cast queue.
+    updateQueueButtons();
   }
 }
 
@@ -2503,12 +2515,12 @@ function setActiveTab(tab: LibraryView): void {
 }
 
 function normalizeTrackSort(value: string | null): TrackSort {
-  return value === "title" || value === "album" || value === "quality" ? value : "artist";
+  return value === "title" || value === "album" || value === "quality" || value === "added" ? value : "artist";
 }
 
 function normalizeSortDirection(value: string | null, sort: TrackSort): SortDirection {
   if (value === "asc" || value === "desc") return value;
-  return sort === "quality" ? "desc" : "asc";
+  return sort === "quality" || sort === "added" ? "desc" : "asc";
 }
 
 function renderSortDirectionOptions(): void {
@@ -2518,6 +2530,9 @@ function renderSortDirectionOptions(): void {
   if (trackSort === "quality") {
     ascending.textContent = t("qualityAscending");
     descending.textContent = t("qualityDescending");
+  } else if (trackSort === "added") {
+    ascending.textContent = t("addedAscending");
+    descending.textContent = t("addedDescending");
   } else {
     ascending.textContent = t("orderAscending");
     descending.textContent = t("orderDescending");
@@ -2530,12 +2545,18 @@ function sortTracks(tracks: Track[], sort: TrackSort, direction: SortDirection):
   const byArtist = (left: Track, right: Track) => collator.compare(left.artist || "", right.artist || "")
     || collator.compare(left.title || "", right.title || "")
     || collator.compare(left.album || "", right.album || "");
+  const byTitle = (left: Track, right: Track) => collator.compare(left.title || "", right.title || "")
+    || collator.compare(left.artist || "", right.artist || "")
+    || collator.compare(left.album || "", right.album || "");
   const comparator = (left: Track, right: Track): number => {
     if (sort === "quality") {
       const quality = (left.bitsPerSample ?? 0) - (right.bitsPerSample ?? 0)
-        || (left.sampleRate ?? 0) - (right.sampleRate ?? 0)
-        || (left.bitrate ?? 0) - (right.bitrate ?? 0);
-      return (direction === "desc" ? -quality : quality) || byArtist(left, right);
+        || (left.sampleRate ?? 0) - (right.sampleRate ?? 0);
+      return (direction === "desc" ? -quality : quality) || byTitle(left, right);
+    }
+    if (sort === "added") {
+      const added = (left.addedAtMs ?? 0) - (right.addedAtMs ?? 0);
+      return (direction === "desc" ? -added : added) || byTitle(left, right);
     }
     if (sort === "title") {
       return collator.compare(left.title || "", right.title || "")
@@ -2550,7 +2571,9 @@ function sortTracks(tracks: Track[], sort: TrackSort, direction: SortDirection):
     return byArtist(left, right);
   };
   const factor = direction === "desc" ? -1 : 1;
-  return [...tracks].sort((left, right) => sort === "quality" ? comparator(left, right) : factor * comparator(left, right));
+  return [...tracks].sort((left, right) => sort === "quality" || sort === "added"
+    ? comparator(left, right)
+    : factor * comparator(left, right));
 }
 
 function positionActiveTabIndicator(): void {
@@ -2572,6 +2595,10 @@ function setPlaybackContext(track: Track, context: Track[]): void {
 }
 
 async function playNext(automatic = false): Promise<void> {
+  // Do not consume a FIFO entry until playTrack can accept the transition.
+  // Cast status and local media events can request the same advance almost at
+  // once; previously the second request could shift and silently lose a track.
+  if (trackChangeInProgress) return;
   if (automatic && repeatMode === "track" && selectedTrack) {
     await replayCurrentTrack();
     return;

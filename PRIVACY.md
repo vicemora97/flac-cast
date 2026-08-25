@@ -9,7 +9,7 @@ Flac Cast is a local-first desktop application. It has no account system, advert
 Flac Cast stores the following data in Electron's application-data directory, currently named `Hires Local` for compatibility with early releases:
 
 - selected local, mapped-drive, UNC, and NAS library paths;
-- indexed file metadata, including file paths, tags, duration, sample rate, and bit depth;
+- indexed file metadata, including file paths, tags, duration, sample rate, bit depth, and the locally recorded first-discovered time;
 - deduplicated album artwork;
 - playlists and optional playlist artwork;
 - playback state, queue, volume, interface language, and window placement;

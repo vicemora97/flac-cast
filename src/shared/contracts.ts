@@ -12,6 +12,7 @@ export type Track = {
   contentType?: string;
   trackNumber?: number;
   discNumber?: number;
+  addedAtMs?: number;
   artworkUrl?: string;
   castArtworkUrl?: string;
   localUrl: string;
