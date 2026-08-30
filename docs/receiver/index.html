@@ -26,18 +26,79 @@
     "use strict";
 
     const context = cast.framework.CastReceiverContext.getInstance();
+    const playerManager = context.getPlayerManager();
     const Command = cast.framework.messages.Command;
+    const MessageType = cast.framework.messages.MessageType;
     const supportedCommands = Command.ALL_BASIC_MEDIA
       | Command.QUEUE_NEXT
       | Command.QUEUE_PREV
       | Command.QUEUE_SHUFFLE
       | Command.QUEUE_REPEAT;
+    let keepDesktopOrder = false;
+
+    class FlacCastQueue extends cast.framework.QueueBase {
+      initialize(loadRequestData) {
+        return loadRequestData.queueData;
+      }
+
+      shuffle() {
+        return this.reorderFuture(true);
+      }
+
+      unshuffle() {
+        return this.reorderFuture(false);
+      }
+
+      reorderFuture(randomize) {
+        const queueManager = playerManager.getQueueManager();
+        const items = queueManager ? queueManager.getItems() : [];
+        if (keepDesktopOrder || items.length < 2) {
+          keepDesktopOrder = false;
+          return items;
+        }
+
+        const currentIndex = Math.max(-1, queueManager.getCurrentItemIndex());
+        const prefix = items.slice(0, currentIndex + 1);
+        const future = items.slice(currentIndex + 1);
+        // Tracks explicitly added with "Add to queue" keep their FIFO
+        // priority. Shuffle affects only the scheduled playback context.
+        const manual = future.filter((item) => item.media?.customData?.castQueueGroup === "manual");
+        const scheduled = future.filter((item) => item.media?.customData?.castQueueGroup !== "manual");
+        if (randomize) {
+          for (let index = scheduled.length - 1; index > 0; index -= 1) {
+            const target = Math.floor(Math.random() * (index + 1));
+            [scheduled[index], scheduled[target]] = [scheduled[target], scheduled[index]];
+          }
+        } else {
+          scheduled.sort((left, right) => {
+            const leftOrder = left.media?.customData?.castQueueOrder;
+            const rightOrder = right.media?.customData?.castQueueOrder;
+            return (Number.isFinite(leftOrder) ? leftOrder : Number.MAX_SAFE_INTEGER)
+              - (Number.isFinite(rightOrder) ? rightOrder : Number.MAX_SAFE_INTEGER);
+          });
+        }
+        return [...prefix, ...manual, ...scheduled];
+      }
+    }
+
+    playerManager.setMessageInterceptor(MessageType.QUEUE_UPDATE, (request) => {
+      if (typeof request.shuffle === "boolean") {
+        keepDesktopOrder = request.customData?.flacCastSender === true;
+        // The queue callback runs synchronously as part of this request. Clear
+        // the marker afterward so a later Google Home command is never mistaken
+        // for a desktop-originated update.
+        setTimeout(() => { keepDesktopOrder = false; }, 0);
+      }
+      return request;
+    });
 
     context.start({
       enforceSupportedCommands: true,
       statusText: "Flac Cast",
-      supportedCommands
+      supportedCommands,
+      queue: new FlacCastQueue()
     });
+    playerManager.getQueueManager()?.setQueueStatusLimit(false);
   </script>
 </body>
 </html>
