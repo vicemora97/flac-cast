@@ -38,7 +38,18 @@
 
     class FlacCastQueue extends cast.framework.QueueBase {
       initialize(loadRequestData) {
-        return loadRequestData.queueData;
+        if (loadRequestData.queueData) return loadRequestData.queueData;
+        const queueData = new cast.framework.messages.QueueData();
+        if (loadRequestData.media) {
+          const item = new cast.framework.messages.QueueItem();
+          item.media = loadRequestData.media;
+          item.autoplay = loadRequestData.autoplay !== false;
+          item.startTime = loadRequestData.currentTime || 0;
+          queueData.items = [item];
+          queueData.startIndex = 0;
+          queueData.startTime = item.startTime;
+        }
+        return queueData;
       }
 
       shuffle() {
