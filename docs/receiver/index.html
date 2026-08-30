@@ -104,7 +104,10 @@
       // Publish every mode change after CAF has processed the request. This is
       // needed for both connected media senders and Google Home's cloud sender.
       if (repeatChanged || shuffleChanged) {
-        setTimeout(() => playerManager.broadcastStatus(true, request.requestId, {
+        // Do not correlate this broadcast with the originating sender's
+        // request. Other controllers (notably Google Home) can discard a
+        // MEDIA_STATUS carrying an unknown requestId as somebody else's reply.
+        setTimeout(() => playerManager.broadcastStatus(true, undefined, {
           flacCastQueueModes: { repeatMode: repeatActive, shuffle: shuffleActive }
         }, true), 100);
       }
