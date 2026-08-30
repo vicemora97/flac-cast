@@ -9,6 +9,7 @@ This directory documents the current implementation of Flac Cast. It is intended
 | [User guide](USER_GUIDE.md) | Library setup, browsing, playback, queues, playlists, lyrics, file actions, and languages. |
 | [Architecture](ARCHITECTURE.md) | Process boundaries, modules, IPC contracts, startup, playback state, and design decisions. |
 | [Google Cast pipeline](CASTING.md) | Discovery, serving, compatibility fallbacks, quality reporting, prewarming, and receiver behavior. |
+| [Cast receiver release process](CAST_RECEIVER_RELEASE.md) | Development/production receiver IDs, Pages deployment, validation, promotion, and rollback. |
 | [Development guide](DEVELOPMENT.md) | Repository layout, commands, build pipeline, coding workflow, packaging, and contribution notes. |
 | [Release guide](RELEASE.md) | Versioning, native artifacts, validation, signing limitations, checksums, tags, and GitHub releases. |
 | [Release-notes template](RELEASE_NOTES_TEMPLATE.md) | Required download, signing, privacy, license, and source links for GitHub releases. |

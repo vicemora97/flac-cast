@@ -5,7 +5,7 @@
 Flac Cast is both a Cast controller and a temporary HTTP origin. The receiver does not receive audio through the Cast control socket. Instead:
 
 1. the app discovers receivers over mDNS;
-2. it launches Google's Default Media Receiver over Cast v2;
+2. it launches the registered Flac Cast Custom Web Receiver over Cast v2, with Google's Default Media Receiver as a compatibility fallback;
 3. it sends a LAN URL and media metadata;
 4. the receiver opens that URL directly from the PC;
 5. the PC streams the selected audio file over HTTP.
@@ -14,11 +14,13 @@ The PC and receiver must be mutually reachable on the same local network. Guest 
 
 ## Receiver identity and music metadata
 
-Flac Cast currently launches Google's free Default Media Receiver. Consequently, Google Home and other remote-control surfaces may identify the session as **Default Media Receiver**; that application name is owned by Google and cannot be changed through track metadata.
+Packaged releases launch the published Flac Cast receiver (`C56EBBCB`) from `https://vicemora97.github.io/flac-cast/receiver/`. Source development runs launch the unpublished Flac Cast Development receiver (`843A0FF9`) from `https://vicemora97.github.io/flac-cast/receiver-dev/`. The development receiver is available only to Cast devices registered in the project's Developer Console account and must remain unpublished.
+
+Set `FLAC_CAST_RECEIVER_APP_ID` before starting the app to override this automatic selection for an explicit test. If the selected Custom Web Receiver cannot launch, Flac Cast falls back to Google's Default Media Receiver so basic playback remains available; remote branding and queue behavior can then be more limited.
 
 Each load request uses Cast's music-track metadata type and sends title, track artist, album, album artist, track number, disc number, duration, and album artwork when available. Older cached library records may not contain a distinct album-artist tag, so Flac Cast safely uses the track artist as the album artist until that file is rescanned. The fields shown by Google Home, a soundbar application, or a device display remain receiver-dependent.
 
-Using a branded application name would require a registered Styled or Custom Media Receiver and its Cast application ID. It is not required for audio playback.
+Receiver changes are developed and validated under `docs/receiver-dev/`. After validation, the development receiver file is promoted deliberately to `docs/receiver/`; production releases must never point at the unpublished development application ID.
 
 ## Discovery
 
@@ -73,7 +75,7 @@ Prewarming is canceled when the Cast generation changes or the receiver disconne
 
 ## Receiver queue and remote controls
 
-Flac Cast sends up to 40 queue items to the Default Media Receiver: up to five recent history items, the current track, manually added FIFO entries, and then the scheduled context. The bound keeps Cast protocol messages and receiver memory predictable even when the desktop queue contains thousands of tracks.
+Flac Cast sends up to 40 queue items to the active Cast media receiver: up to five recent history items, the current track, manually added FIFO entries, and then the scheduled context. The bound keeps Cast protocol messages and receiver memory predictable even when the desktop queue contains thousands of tracks.
 
 The receiver assigns queue item IDs and can process Previous, Next, and repeat commands without waiting for the renderer to load each track. Status messages include the active track ID, allowing Flac Cast to follow transitions initiated from Google Home. Shuffle is materialized as the already shuffled scheduled order; manual FIFO entries remain first. Queue synchronization compares track IDs and media URLs, preserves matching entries, removes only obsolete entries, inserts only missing entries, and reorders the future portion when necessary.
 
@@ -85,7 +87,7 @@ Google Home chooses which controls and queue details to render for each receiver
 
 Flac Cast now starts with a single `QUEUE_LOAD`; it does not play the current item through `LOAD` first. This avoids an audible start, interruption, and restart at zero. The app validates that queued playback reaches and remains in `PLAYING`. If the receiver rejects the first queue request, Flac Cast closes only the stale sender transport, attaches a fresh session once, and retries the same queue with a cache-busted current-media URL. Delayed status or error events from the abandoned transport are ignored. Only if that bounded retry also fails does it switch to the single-item compatibility pipeline without starting another recovery, disable further queue synchronization for that connection, and report that remote queue controls are unavailable. A later manual reconnect permits one fresh queue capability test.
 
-If a receiver-side transition ends in `IDLE/ERROR`, the renderer makes one recovery attempt for that receiver/track pair. The controller rebuilds the Default Media Receiver session, preserves the intended track position and queue, retries original audio, and then uses WAV if required. The retry key is cleared only after playback succeeds, preventing an infinite reconnect loop.
+If a receiver-side transition ends in `IDLE/ERROR`, the renderer makes one recovery attempt for that receiver/track pair. The controller rebuilds the active media receiver session, preserves the intended track position and queue, retries original audio, and then uses WAV if required. The retry key is cleared only after playback succeeds, preventing an infinite reconnect loop.
 
 The Cast control socket is separate from the HTTP audio transfer. If that socket closes unexpectedly, the controller retains the device, active track, effective delivery mode, and extrapolated playback position. The renderer can then reconstruct the session and queue once from that position. Explicit user disconnection has no error marker and never triggers this recovery path.
 
@@ -109,6 +111,6 @@ When a receiver is selected while a local track is active, the renderer captures
 
 ## Troubleshooting Cast quality
 
-A published Cast codec table describes platform capabilities, not a guarantee for every third-party receiver implementation. Receiver firmware, Default Media Receiver support, accepted MIME aliases, FLAC metadata layout, channel configuration, and the downstream audio path can all affect playback.
+A published Cast codec table describes platform capabilities, not a guarantee for every third-party receiver implementation. Receiver firmware, Web Receiver support, accepted MIME aliases, FLAC metadata layout, channel configuration, and the downstream audio path can all affect playback.
 
 Use the delivery label to distinguish direct FLAC, sanitized FLAC, and WAV fallback. See [Troubleshooting](TROUBLESHOOTING.md) for network and receiver diagnostics.

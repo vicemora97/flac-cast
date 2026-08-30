@@ -109,6 +109,8 @@ The track menu offers:
 
 Open **Cast**, choose a receiver, and select a track. The PC must remain awake and reachable because it serves the media directly to the receiver. The Cast panel reports preparation, conversion, buffering, playback, receiver requests, and effective format.
 
+Normal packaged releases use the branded Flac Cast Custom Web Receiver. If that receiver is temporarily unavailable, the app can fall back to Google's Default Media Receiver so playback remains possible, although Google Home may then display generic branding or fewer queue controls.
+
 When Cast is started during local playback, the receiver begins at the local player's current position instead of restarting the track.
 
 Flac Cast sends a bounded receiver queue containing recent history, the current track, manually added FIFO entries, and upcoming scheduled tracks. Compatible Google Home and receiver surfaces can therefore expose Previous, Next, and repeat controls. Google decides which controls and how much queue detail each device UI displays; Flac Cast cannot force unsupported controls to appear. Shuffle is represented by the already shuffled scheduled order.

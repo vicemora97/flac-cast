@@ -17,6 +17,8 @@
 ```text
 assets/                 Application and taskbar icons
 docs/                   Project documentation
+docs/receiver/          Published production Cast Web Receiver
+docs/receiver-dev/      Unpublished development Cast Web Receiver
 scripts/                Build, icon, package, and installer scripts
 src/main/               Privileged Electron services
 src/renderer/           UI, player orchestration, styles, localization
@@ -43,6 +45,19 @@ npm run dev
 ```
 
 The command builds the project and launches Electron. The window close button hides the app to the tray; quit from the tray before testing a fresh process.
+
+Development runs automatically use Cast application `843A0FF9` and `docs/receiver-dev/`. That receiver is intentionally unpublished and works only on devices authorized in the Google Cast SDK Developer Console. Packaged applications use production application `C56EBBCB` and `docs/receiver/`.
+
+An explicit local test can override the automatic choice:
+
+```powershell
+$env:FLAC_CAST_RECEIVER_APP_ID = "C56EBBCB"
+npm.cmd run dev
+```
+
+Do not commit credentials or console access data. Cast application IDs are public routing identifiers, not secrets.
+
+See [Cast receiver release process](CAST_RECEIVER_RELEASE.md) before changing the production receiver.
 
 ## Validation
 

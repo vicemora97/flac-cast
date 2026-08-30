@@ -16,6 +16,8 @@ npm run build
 npm audit
 ```
 
+If the release changes Cast receiver behavior, validate the change through the unpublished development receiver before copying it into `docs/receiver/`. The production receiver is served independently from the desktop binaries and can affect already installed versions as soon as GitHub Pages deploys it. Follow the [Cast receiver release process](CAST_RECEIVER_RELEASE.md).
+
 The repository CI repeats dependency installation, license validation, TypeScript checking, and bundling on every push and pull request to `main`. `.github/workflows/release-artifacts.yml` builds all native artifacts on GitHub-hosted runners for version tags or manual verification. It uploads unsigned workflow artifacts but does not publish a GitHub release automatically.
 
 ## Platform artifacts
@@ -75,12 +77,13 @@ The project is preparing for SignPath Foundation. Follow [the open-source releas
 1. Merge reviewed platform work into `main`.
 2. Confirm the worktree is clean and CI is green.
 3. Confirm `CHANGELOG.md` and both package versions match the intended tag.
-4. Create an annotated tag from the exact release commit: `git tag -a vX.Y.Z -m "Flac Cast vX.Y.Z"`.
-5. Push the tag: `git push origin vX.Y.Z`.
-6. Create a GitHub release from that tag and paste the corresponding changelog section.
+4. Confirm that packaged builds select production Cast application `C56EBBCB`, and that development-only receiver changes have not been promoted accidentally.
+5. Create an annotated tag from the exact release commit: `git tag -a vX.Y.Z -m "Flac Cast vX.Y.Z"`.
+6. Push the tag: `git push origin vX.Y.Z`.
+7. Create a GitHub release from that tag and paste the corresponding changelog section.
    Start from [the release-notes template](RELEASE_NOTES_TEMPLATE.md) so signing, privacy, license, and source links are not omitted.
-7. Attach native artifacts and their SHA-256 checksum files.
-8. Link the **Code signing policy**, privacy policy, license, trademark policy, source tag, third-party notices, and the exact FFmpeg source/build provenance for every packaged platform binary in the release description.
-9. Mark unsigned builds as a prerelease until signing and platform reputation requirements are addressed.
+8. Attach native artifacts and their SHA-256 checksum files.
+9. Link the **Code signing policy**, privacy policy, license, trademark policy, source tag, third-party notices, and the exact FFmpeg source/build provenance for every packaged platform binary in the release description.
+10. Mark unsigned builds as a prerelease until signing and platform reputation requirements are addressed.
 
 Keep a release as a draft until all advertised native artifacts come from the tagged commit. Publish one release containing the Windows, macOS, and Linux downloads so visitors can choose their operating system from a single page.

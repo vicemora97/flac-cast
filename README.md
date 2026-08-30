@@ -57,6 +57,8 @@ npm run package:linux # Linux only
 npm run make:linux    # Linux only
 ```
 
+Development runs automatically use the unpublished Google Cast receiver registered for authorized test devices. Packaged applications use the production receiver. See the [Google Cast pipeline](docs/CASTING.md) before modifying or promoting receiver code.
+
 Release artifacts are created under:
 
 ```text
@@ -81,6 +83,7 @@ This directory contains settings, the library index, deduplicated artwork, and t
 - [User guide](docs/USER_GUIDE.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Google Cast pipeline](docs/CASTING.md)
+- [Cast receiver release process](docs/CAST_RECEIVER_RELEASE.md)
 - [Development guide](docs/DEVELOPMENT.md)
 - [Release guide](docs/RELEASE.md)
 - [Data, cache, privacy, and security](docs/DATA_AND_SECURITY.md)

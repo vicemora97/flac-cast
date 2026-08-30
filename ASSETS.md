@@ -1,6 +1,6 @@
 # Asset provenance
 
-The Flac Cast application icon, Windows thumbnail-toolbar icons, and their PNG/ICO/ICNS variants are project-owned assets generated entirely by `scripts/generate-icon.mjs`. The generator draws the rounded background, equalizer bars, and playback glyphs from numeric geometry and colors; it does not download or embed a third-party logo, font, photograph, or icon file.
+The Flac Cast application icon, Windows thumbnail-toolbar icons, and their PNG/ICO/ICNS variants are project-owned assets generated entirely by `scripts/generate-icon.mjs`. The generator draws the rounded background, equalizer bars, and playback glyphs from numeric geometry and colors; it does not download or embed a third-party logo, font, photograph, or icon file. The standalone `assets/icon.png` is generated at 512×512 for application stores and Google Cast registration, while ICO and ICNS outputs retain their platform-specific size sets.
 
 The inline SVG interface symbols in `src/renderer/index.html` are part of the Flac Cast source and are distributed under the same `GPL-3.0-or-later` license.
 

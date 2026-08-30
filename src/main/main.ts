@@ -6,7 +6,11 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { LibraryManager, LibraryUnavailableError } from "./library.js";
 import { LibraryWatcher } from "./library-watcher.js";
 import { MediaServer } from "./media-server.js";
-import { CastController } from "./cast-controller.js";
+import {
+  CastController,
+  FLAC_CAST_DEVELOPMENT_RECEIVER_APP_ID,
+  FLAC_CAST_PRODUCTION_RECEIVER_APP_ID
+} from "./cast-controller.js";
 import { CastDiagnostics } from "./cast-diagnostics.js";
 import { LosslessTranscoder } from "./lossless-transcoder.js";
 import { LyricsService } from "./lyrics.js";
@@ -45,6 +49,9 @@ let appLanguage: "en" | "es" = "en";
 const taskbarStateCache = new Map<number, string>();
 const taskbarPlaybackStates = new Map<number, TaskbarPlaybackState>();
 const taskbarIconCache = new Map<string, Electron.NativeImage>();
+const configuredCastReceiverAppId = process.env.FLAC_CAST_RECEIVER_APP_ID?.trim();
+const castReceiverAppId = configuredCastReceiverAppId
+  || (app.isPackaged ? FLAC_CAST_PRODUCTION_RECEIVER_APP_ID : FLAC_CAST_DEVELOPMENT_RECEIVER_APP_ID);
 const castController = new CastController(
   async (track) => {
     if (!track.castUrl) throw new Error("La pista no tiene una URL local para Chromecast");
@@ -92,7 +99,8 @@ const castController = new CastController(
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el FLAC compatible");
     return endpoint.castUrl;
   },
-  (event, data) => castDiagnostics.record("main", event, data)
+  (event, data) => castDiagnostics.record("main", event, data),
+  castReceiverAppId
 );
 
 async function createWindow(): Promise<void> {

@@ -4,6 +4,16 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added a dedicated unpublished Google Cast development receiver and documented the validation, promotion, and rollback workflow for receiver releases.
+- Added a 512×512 official application icon suitable for Google Cast and other distribution surfaces.
+
+### Changed
+
+- Source development runs now select the development Cast application automatically, while packaged builds continue to use the published production receiver.
+- GitHub Pages deployment now watches both the production and development receiver directories.
+
 ## [1.0.7] - 2026-08-25
 
 ### Added

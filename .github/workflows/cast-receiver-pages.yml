@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - docs/receiver/**
+      - docs/receiver-dev/**
       - .github/workflows/cast-receiver-pages.yml
   workflow_dispatch:
 

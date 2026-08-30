@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flac Cast Development Receiver</title>
+  <style>
+    html, body, cast-media-player {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: #0d100e;
+    }
+
+    cast-media-player {
+      --theme-hue: 82;
+      --splash-image: none;
+      --logo-image: none;
+    }
+  </style>
+</head>
+<body>
+  <cast-media-player></cast-media-player>
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script>
+    "use strict";
+
+    const context = cast.framework.CastReceiverContext.getInstance();
+    const playerManager = context.getPlayerManager();
+    const Command = cast.framework.messages.Command;
+    const MessageType = cast.framework.messages.MessageType;
+    const supportedCommands = Command.ALL_BASIC_MEDIA
+      | Command.QUEUE_NEXT
+      | Command.QUEUE_PREV
+      | Command.QUEUE_SHUFFLE
+      | Command.QUEUE_REPEAT;
+    let shuffleActive = false;
+    let repeatActive = "REPEAT_OFF";
+    let queueStatus;
+
+    class FlacCastQueue extends cast.framework.QueueBase {
+      initialize(loadRequestData) {
+        shuffleActive = loadRequestData.queueData?.shuffle === true;
+        repeatActive = loadRequestData.queueData?.repeatMode || "REPEAT_OFF";
+        if (loadRequestData.queueData) {
+          queueStatus = loadRequestData.queueData;
+          return queueStatus;
+        }
+        const queueData = new cast.framework.messages.QueueData();
+        if (loadRequestData.media) {
+          const item = new cast.framework.messages.QueueItem();
+          item.media = loadRequestData.media;
+          item.autoplay = loadRequestData.autoplay !== false;
+          item.startTime = loadRequestData.currentTime || 0;
+          queueData.items = [item];
+          queueData.startIndex = 0;
+          queueData.startTime = item.startTime;
+        }
+        queueStatus = queueData;
+        return queueStatus;
+      }
+    }
+
+    function reorderFuture(randomize) {
+      const queueManager = playerManager.getQueueManager();
+      const items = queueManager ? queueManager.getItems() : [];
+      const currentIndex = queueManager ? queueManager.getCurrentItemIndex() : -1;
+      if (currentIndex < 0 || currentIndex >= items.length - 1) return;
+
+      const future = items.slice(currentIndex + 1);
+      // Tracks explicitly added with "Add to queue" keep their FIFO
+      // priority. Shuffle affects only the scheduled playback context.
+      const manual = future.filter((item) => item.media?.customData?.castQueueGroup === "manual");
+      const scheduled = future.filter((item) => item.media?.customData?.castQueueGroup !== "manual");
+      if (randomize) {
+        for (let index = scheduled.length - 1; index > 0; index -= 1) {
+          const target = Math.floor(Math.random() * (index + 1));
+          [scheduled[index], scheduled[target]] = [scheduled[target], scheduled[index]];
+        }
+      } else {
+        scheduled.sort((left, right) => {
+          const leftOrder = left.media?.customData?.castQueueOrder;
+          const rightOrder = right.media?.customData?.castQueueOrder;
+          return (Number.isFinite(leftOrder) ? leftOrder : Number.MAX_SAFE_INTEGER)
+            - (Number.isFinite(rightOrder) ? rightOrder : Number.MAX_SAFE_INTEGER);
+        });
+      }
+      const itemIds = [...manual, ...scheduled].flatMap((item) => item.itemId ?? []);
+      if (itemIds.length < 2) return;
+      const request = new cast.framework.messages.QueueReorderRequestData(itemIds);
+      request.currentItemId = items[currentIndex].itemId;
+      request.currentTime = playerManager.getRawCurrentTimeSec();
+      playerManager.sendLocalMediaRequest(request);
+    }
+
+    playerManager.setMessageInterceptor(MessageType.QUEUE_UPDATE, (request) => {
+      const shuffleChanged = typeof request.shuffle === "boolean";
+      const repeatChanged = typeof request.repeatMode === "string";
+      if (shuffleChanged) {
+        shuffleActive = request.shuffle;
+        // QueueBase.initialize() returns this same QueueData object to CAF.
+        // Updating the retained reference changes the native status observed
+        // by Google Home without asking CAF to process shuffle and reload the
+        // current item.
+        if (queueStatus) queueStatus.shuffle = shuffleActive;
+        const desktopAlreadyOrdered = request.customData?.flacCastSender === true;
+        // CAF reloads the item at the current queue position whenever its
+        // native shuffle flag is processed. Keep shuffle as receiver state and
+        // reorder only future IDs so the playing media element is untouched.
+        request.shuffle = undefined;
+        if (!desktopAlreadyOrdered) setTimeout(() => reorderFuture(shuffleActive), 0);
+      }
+      if (repeatChanged) {
+        repeatActive = request.repeatMode;
+        if (queueStatus) queueStatus.repeatMode = repeatActive;
+      }
+      // Publish every mode change after CAF has processed the request. This is
+      // needed for both connected media senders and Google Home's cloud sender.
+      if (repeatChanged || shuffleChanged) {
+        // Do not correlate this broadcast with the originating sender's
+        // request. Other controllers (notably Google Home) can discard a
+        // MEDIA_STATUS carrying an unknown requestId as somebody else's reply.
+        setTimeout(() => playerManager.broadcastStatus(true, undefined, {
+          flacCastQueueModes: { repeatMode: repeatActive, shuffle: shuffleActive }
+        }, true), 100);
+      }
+      return request;
+    });
+
+    function publishQueueModes(status) {
+      status.queueData = status.queueData || new cast.framework.messages.QueueData();
+      status.repeatMode = repeatActive;
+      status.queueData.repeatMode = repeatActive;
+      status.queueData.shuffle = shuffleActive;
+      status.customData = Object.assign({}, status.customData, {
+        flacCastQueueModes: { repeatMode: repeatActive, shuffle: shuffleActive }
+      });
+      return status;
+    }
+
+    playerManager.setMessageInterceptor(MessageType.MEDIA_STATUS, publishQueueModes);
+
+    context.start({
+      enforceSupportedCommands: true,
+      statusText: "Flac Cast Development",
+      supportedCommands,
+      queue: new FlacCastQueue()
+    });
+    playerManager.getQueueManager()?.setQueueStatusLimit(false);
+  </script>
+</body>
+</html>

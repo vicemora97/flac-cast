@@ -2,10 +2,13 @@ import Bonjour = require("bonjour-service");
 import { Client, DefaultMediaReceiver, type CastMediaStatus } from "castv2-client";
 import type { CastDeliveryMode, CastDevice, CastQueueRequest, CastState, CastTrack } from "../shared/contracts.js";
 
-const FLAC_CAST_RECEIVER_APP_ID = "C56EBBCB";
+export const FLAC_CAST_PRODUCTION_RECEIVER_APP_ID = "C56EBBCB";
+export const FLAC_CAST_DEVELOPMENT_RECEIVER_APP_ID = "843A0FF9";
 
-class FlacCastMediaReceiver extends DefaultMediaReceiver {
-  static readonly APP_ID = FLAC_CAST_RECEIVER_APP_ID;
+function createFlacCastMediaReceiver(appId: string): typeof DefaultMediaReceiver {
+  return class FlacCastMediaReceiver extends DefaultMediaReceiver {
+    static readonly APP_ID = appId;
+  };
 }
 
 type KnownDevice = CastDevice & { host: string; lastSeen: number };
@@ -36,7 +39,8 @@ export class CastController {
     private readonly prepareFlac: FlacPreparer,
     private readonly createLosslessFallback: LosslessFallback,
     private readonly createCompatibleFlac: CompatibleFlacFallback,
-    private readonly reportDiagnostic: (event: string, data: Record<string, unknown>) => void = () => undefined
+    private readonly reportDiagnostic: (event: string, data: Record<string, unknown>) => void = () => undefined,
+    private readonly receiverAppId = FLAC_CAST_PRODUCTION_RECEIVER_APP_ID
   ) {
     this.bonjour = new Bonjour({}, (error: Error) => {
       this.state = { ...this.state, error: `No se pudo usar mDNS: ${error.message}` };
@@ -119,15 +123,16 @@ export class CastController {
       let player: DefaultMediaReceiver;
       let customReceiver = false;
       try {
-        player = await this.launchReceiver(client, FlacCastMediaReceiver, "Flac Cast", FLAC_CAST_RECEIVER_APP_ID);
+        const receiverType = createFlacCastMediaReceiver(this.receiverAppId);
+        player = await this.launchReceiver(client, receiverType, "Flac Cast", this.receiverAppId);
         customReceiver = true;
-        this.reportDiagnostic("receiver-launched", { appId: FLAC_CAST_RECEIVER_APP_ID, receiver: "custom" });
+        this.reportDiagnostic("receiver-launched", { appId: this.receiverAppId, receiver: "custom" });
       } catch (customReceiverError) {
         // Unpublished receivers are available only on devices registered in
         // the Cast Developer Console. Keep all other devices usable while the
         // custom receiver is being tested and during a staged rollout.
         this.reportDiagnostic("receiver-launch-fallback", {
-          appId: FLAC_CAST_RECEIVER_APP_ID,
+          appId: this.receiverAppId,
           error: customReceiverError instanceof Error ? customReceiverError.message : String(customReceiverError)
         });
         player = await this.launchReceiver(client, DefaultMediaReceiver, "Default Media Receiver");

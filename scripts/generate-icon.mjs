@@ -9,13 +9,14 @@ const run = promisify(execFile);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outputFolder = join(root, "assets");
-const sizes = [16, 24, 32, 48, 64, 128, 256];
-const images = sizes.map((size) => createPng(size));
+const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+const icoImages = icoSizes.map((size) => createPng(size));
+const applicationIcon = createPng(512);
 
 await mkdir(outputFolder, { recursive: true });
 await Promise.all([
-  writeIfChanged(join(outputFolder, "icon.png"), images.at(-1)),
-  writeIfChanged(join(outputFolder, "icon.ico"), createIco(images, sizes)),
+  writeIfChanged(join(outputFolder, "icon.png"), applicationIcon),
+  writeIfChanged(join(outputFolder, "icon.ico"), createIco(icoImages, icoSizes)),
   writeIfChanged(join(outputFolder, "thumbar-previous.png"), createPng(32, glyphColor("previous"))),
   writeIfChanged(join(outputFolder, "thumbar-play.png"), createPng(32, glyphColor("play"))),
   writeIfChanged(join(outputFolder, "thumbar-pause.png"), createPng(32, glyphColor("pause"))),
