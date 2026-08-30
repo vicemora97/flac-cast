@@ -7,6 +7,7 @@ import { LibraryManager, LibraryUnavailableError } from "./library.js";
 import { LibraryWatcher } from "./library-watcher.js";
 import { MediaServer } from "./media-server.js";
 import { CastController } from "./cast-controller.js";
+import { CastDiagnostics } from "./cast-diagnostics.js";
 import { LosslessTranscoder } from "./lossless-transcoder.js";
 import { LyricsService } from "./lyrics.js";
 import { PreferencesStore } from "./preferences.js";
@@ -23,6 +24,7 @@ if (!hasSingleInstanceLock) app.quit();
 const mediaServer = new MediaServer();
 const transcoder = new LosslessTranscoder();
 const lyricsService = new LyricsService(app.getPath("userData"), app.getVersion());
+const castDiagnostics = new CastDiagnostics(app.getPath("userData"));
 let preferences: PreferencesStore;
 let libraryManager: LibraryManager;
 let libraryWatcher: LibraryWatcher;
@@ -89,7 +91,8 @@ const castController = new CastController(
     const endpoint = mediaServer.register(compatiblePath, castController.getReceiverHost(), { immutable: true });
     if (!endpoint.castUrl) throw new Error("No hay una dirección LAN para transmitir el FLAC compatible");
     return endpoint.castUrl;
-  }
+  },
+  (event, data) => castDiagnostics.record("main", event, data)
 );
 
 async function createWindow(): Promise<void> {
@@ -362,6 +365,9 @@ ipcMain.handle("cast:state", async (_event, refreshVolume = true) => {
   const state = refreshVolume ? await castController.getFreshState() : castController.getState();
   syncActiveCastCache(state);
   return state;
+});
+ipcMain.on("cast:diagnostic", (_event, event: string, data?: Record<string, unknown>) => {
+  castDiagnostics.record("renderer", String(event).slice(0, 80), data && typeof data === "object" ? data : {});
 });
 ipcMain.handle("cast:connect", async (_event, deviceId: string) => {
   if (preparedCastDeviceId !== deviceId) preparedCastTracks.clear();

@@ -43,6 +43,14 @@ export type CastState = {
   deliveryPhase?: "preparing" | "loading" | "converting" | "playing" | "failed";
   currentTrackId?: string;
   repeatMode?: "off" | "all" | "single";
+  shuffle?: boolean;
+  customReceiver?: boolean;
+  queueItems?: Array<{
+    trackId: string;
+    current?: boolean;
+    group?: "history" | "current" | "manual" | "scheduled";
+    order?: number;
+  }>;
   queueActive?: boolean;
 };
 
@@ -52,6 +60,8 @@ export type CastTrack = Pick<Track, "id" | "title" | "artist" | "album" | "album
   castDeliveryMode?: CastDeliveryMode;
   castDeliveryBits?: number;
   castDeliverySampleRate?: number;
+  castQueueGroup?: "history" | "current" | "manual" | "scheduled";
+  castQueueOrder?: number;
 };
 
 export type CastQueueRequest = {
@@ -59,6 +69,7 @@ export type CastQueueRequest = {
   currentIndex: number;
   startTimeSeconds?: number;
   repeatMode: "off" | "all" | "single";
+  shuffle: boolean;
 };
 
 export type LyricsTrack = Pick<Track, "title" | "artist" | "album" | "durationSeconds">;
@@ -148,6 +159,7 @@ export type HiresApi = {
   prepareLocalTrack(track: CastTrack): Promise<string>;
   disconnectCast(): Promise<CastState>;
   getMediaAccess(): Promise<MediaAccess | undefined>;
+  logCastDiagnostic(event: string, data?: Record<string, unknown>): void;
   getLyrics(track: LyricsTrack): Promise<LyricsLookupResult>;
   setTaskbarPlaybackState(state: TaskbarPlaybackState): void;
   onTaskbarPlaybackCommand(listener: (command: PlaybackCommand) => void): () => void;

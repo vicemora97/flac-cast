@@ -3,6 +3,10 @@ export type AppLanguage = "en" | "es";
 const en = {
   localPlayer: "LOCAL MUSIC PLAYER",
   language: "Language",
+  displayMode: "Display mode",
+  displayAuto: "Auto",
+  displaySdr: "SDR",
+  displayHdr: "HDR",
   libraries: "Libraries",
   libraryView: "Library view",
   navigationHistory: "Navigation history",
@@ -212,7 +216,7 @@ const en = {
 export type TranslationKey = keyof typeof en;
 
 const es: Record<TranslationKey, string> = {
-  localPlayer: "REPRODUCTOR LOCAL", language: "Idioma", libraries: "Bibliotecas", libraryView: "Vista de biblioteca",
+  localPlayer: "REPRODUCTOR LOCAL", language: "Idioma", displayMode: "Modo visual", displayAuto: "Auto", displaySdr: "SDR", displayHdr: "HDR", libraries: "Bibliotecas", libraryView: "Vista de biblioteca",
   navigationHistory: "Historial de navegación", navigateBack: "Atrás", navigateForward: "Adelante",
   tracks: "Pistas", albums: "Álbumes", artists: "Artistas", playlists: "Playlists", about: "Acerca de",
   aboutApp: "ACERCA DE FLAC CAST", aboutDescription: "Un reproductor de audio de alta resolución, local primero y compatible con Google Cast.",

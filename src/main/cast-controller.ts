@@ -2,6 +2,12 @@ import Bonjour = require("bonjour-service");
 import { Client, DefaultMediaReceiver, type CastMediaStatus } from "castv2-client";
 import type { CastDeliveryMode, CastDevice, CastQueueRequest, CastState, CastTrack } from "../shared/contracts.js";
 
+const FLAC_CAST_RECEIVER_APP_ID = "C56EBBCB";
+
+class FlacCastMediaReceiver extends DefaultMediaReceiver {
+  static readonly APP_ID = FLAC_CAST_RECEIVER_APP_ID;
+}
+
 type KnownDevice = CastDevice & { host: string; lastSeen: number };
 type LosslessFallback = (track: CastTrack, targetBits: 16 | 24, targetSampleRate: number) => Promise<string>;
 type CompatibleFlacFallback = (track: CastTrack, targetBits: 16 | 24, targetSampleRate: number) => Promise<string>;
@@ -24,11 +30,13 @@ export class CastController {
   private queueAllowed = true;
   private queueMutation = Promise.resolve();
   private readonly receiverProfiles = new Map<string, Map<string, PreferredCastDelivery>>();
+  private lastStatusDiagnosticSignature = "";
 
   constructor(
     private readonly prepareFlac: FlacPreparer,
     private readonly createLosslessFallback: LosslessFallback,
-    private readonly createCompatibleFlac: CompatibleFlacFallback
+    private readonly createCompatibleFlac: CompatibleFlacFallback,
+    private readonly reportDiagnostic: (event: string, data: Record<string, unknown>) => void = () => undefined
   ) {
     this.bonjour = new Bonjour({}, (error: Error) => {
       this.state = { ...this.state, error: `No se pudo usar mDNS: ${error.message}` };
@@ -108,16 +116,25 @@ export class CastController {
         if (this.client === client) this.applyReceiverStatus(status);
       });
 
-      const player = await withTimeout(new Promise<DefaultMediaReceiver>((resolve, reject) => {
-        client.launch(DefaultMediaReceiver, (error, receiver) => {
-          if (error) reject(error);
-          else if (!receiver) reject(new Error("Chromecast no entregó una sesión multimedia"));
-          else resolve(receiver);
+      let player: DefaultMediaReceiver;
+      let customReceiver = false;
+      try {
+        player = await this.launchReceiver(client, FlacCastMediaReceiver, "Flac Cast", FLAC_CAST_RECEIVER_APP_ID);
+        customReceiver = true;
+        this.reportDiagnostic("receiver-launched", { appId: FLAC_CAST_RECEIVER_APP_ID, receiver: "custom" });
+      } catch (customReceiverError) {
+        // Unpublished receivers are available only on devices registered in
+        // the Cast Developer Console. Keep all other devices usable while the
+        // custom receiver is being tested and during a staged rollout.
+        this.reportDiagnostic("receiver-launch-fallback", {
+          appId: FLAC_CAST_RECEIVER_APP_ID,
+          error: customReceiverError instanceof Error ? customReceiverError.message : String(customReceiverError)
         });
-      }), 10_000, "Chromecast no inició el receptor multimedia");
+        player = await this.launchReceiver(client, DefaultMediaReceiver, "Default Media Receiver");
+      }
 
       this.player = player;
-      this.state = { connected: true, deviceId, deviceName: device.name, deviceModel: device.model, playerState: "IDLE" };
+      this.state = { connected: true, deviceId, deviceName: device.name, deviceModel: device.model, playerState: "IDLE", customReceiver };
       this.stateUpdatedAt = Date.now();
       player.on("status", (status: CastMediaStatus) => {
         if (this.player === player) this.applyStatus(status);
@@ -138,6 +155,45 @@ export class CastController {
       }
       throw error;
     }
+  }
+
+  private launchReceiver(
+    client: Client,
+    receiverType: typeof DefaultMediaReceiver,
+    receiverName: string,
+    universalAppId?: string
+  ): Promise<DefaultMediaReceiver> {
+    return withTimeout(new Promise<DefaultMediaReceiver>((resolve, reject) => {
+      if (universalAppId) {
+        // Some Chromecast built-in audio devices return a device-specific
+        // appId while exposing the registered ID as universalAppId. The
+        // upstream castv2-client launch helper matches appId only and then
+        // attempts to join an undefined session. Match both identities here.
+        client.receiver.launch(universalAppId, (launchError, sessions) => {
+          if (launchError) {
+            reject(launchError);
+            return;
+          }
+          const session = sessions?.find((candidate) => candidate.appId === universalAppId
+            || candidate.universalAppId === universalAppId);
+          if (!session) {
+            reject(new Error(`${receiverName} no entregó una sesión compatible`));
+            return;
+          }
+          client.join(session, receiverType, (joinError, receiver) => {
+            if (joinError) reject(joinError);
+            else if (!receiver) reject(new Error(`${receiverName} no entregó una sesión multimedia`));
+            else resolve(receiver);
+          });
+        });
+        return;
+      }
+      client.launch(receiverType, (error, receiver) => {
+        if (error) reject(error);
+        else if (!receiver) reject(new Error(`${receiverName} no entregó una sesión multimedia`));
+        else resolve(receiver);
+      });
+    }), 10_000, `Chromecast no inició ${receiverName}`);
   }
 
   async castTrack(track: CastTrack, startTimeSeconds = 0, allowSessionRecovery = true): Promise<CastState> {
@@ -250,6 +306,12 @@ export class CastController {
     if (tracks.length === 0) throw new Error("The Cast queue is empty");
     const currentIndex = Math.max(0, Math.min(tracks.length - 1, request.currentIndex));
     const current = tracks[currentIndex]!;
+    this.reportDiagnostic("queue-load-request", {
+      currentTrackId: current.id,
+      currentIndex,
+      trackIds: tracks.map((track) => track.id),
+      queueAllowed: this.queueAllowed
+    });
     if (!this.queueAllowed) return this.castTrack(current, request.startTimeSeconds ?? 0);
     if (!this.player || !this.state.connected) throw new Error("Primero selecciona un dispositivo Chromecast");
     if (!current.castUrl) throw new Error("No hay una dirección de red local disponible para esta pista");
@@ -366,12 +428,7 @@ export class CastController {
 
     // Repeat mode is a queue property and can be changed without replacing the
     // current media item.
-    const updated = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
-      player.queueUpdate([], { repeatMode: castRepeatMode(request.repeatMode) }, (error, result) => {
-        if (error) reject(error);
-        else resolve((result ?? {}) as CastMediaStatus);
-      });
-    }), 3_000, "Chromecast no respondió al actualizar la repetición");
+    const updated = await this.sendQueueModeUpdate(player, request);
     if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la repetición");
     this.applyStatus(updated);
     this.state = { ...this.state, queueActive: true };
@@ -391,22 +448,41 @@ export class CastController {
     const currentItemId = status.currentItemId;
     const currentPosition = currentItemId == null ? -1 : (status.items ?? []).findIndex((item) => item.itemId === currentItemId);
     if (currentItemId == null || currentPosition < 0) throw new Error("Chromecast no informó el elemento actual de la cola");
+    this.reportDiagnostic("queue-update-start", {
+      stateTrackId: this.state.currentTrackId,
+      currentItemId,
+      desiredTrackIds: desiredFuture.map((track) => track.id),
+      receiverQueue: (status.items ?? []).map((item) => ({ itemId: item.itemId, trackId: item.media?.customData?.trackId }))
+    });
 
     const pastItems = (status.items ?? []).slice(0, currentPosition);
     const existingFuture = (status.items ?? []).slice(currentPosition + 1);
     const usedItemIds = new Set<number>();
-    const missingTracks: CastTrack[] = [];
-    for (const track of desiredFuture) {
+    const retainedItemByDesiredIndex = new Map<number, number>();
+    for (const [index, track] of desiredFuture.entries()) {
       const match = existingFuture.find((item) => item.itemId != null
         && !usedItemIds.has(item.itemId)
-        && item.media?.customData?.trackId === track.id
-        && item.media?.contentId === track.castUrl);
-      if (match?.itemId != null) usedItemIds.add(match.itemId);
-      else missingTracks.push(track);
+        && item.media?.customData?.trackId === track.id);
+      if (match?.itemId != null) {
+        usedItemIds.add(match.itemId);
+        retainedItemByDesiredIndex.set(index, match.itemId);
+      }
     }
 
-    if (missingTracks.length > 0) {
-      const futureItems = missingTracks.map((track, index) => ({
+    // Insert each missing run at its actual desired position. Inserting every
+    // missing item before the first retained item moved tracks that belonged
+    // after it to the front, which made the receiver skip the retained next
+    // song. Track IDs are the stable identity; content URLs may legitimately
+    // change when a prepared cache file replaces the original route.
+    for (let index = 0; index < desiredFuture.length;) {
+      if (retainedItemByDesiredIndex.has(index)) {
+        index += 1;
+        continue;
+      }
+      const runStart = index;
+      while (index < desiredFuture.length && !retainedItemByDesiredIndex.has(index)) index += 1;
+      const missingRun = desiredFuture.slice(runStart, index);
+      const futureItems = missingRun.map((track, offset) => ({
         media: {
           contentId: track.castUrl!,
           contentType: directContentTypes(track)[0] ?? "application/octet-stream",
@@ -417,15 +493,11 @@ export class CastController {
         },
         autoplay: true,
         startTime: 0,
-        preloadTime: suggestedPreloadTime(track, index)
+        preloadTime: suggestedPreloadTime(track, runStart + offset)
       }));
-      // Insert new entries before the first retained future item instead of
-      // appending them and relying solely on QUEUE_REORDER. Some audio-only
-      // receivers acknowledge reordering but keep the appended item at the
-      // end, which made a manually queued FIFO track get skipped.
-      const firstRetainedFuture = existingFuture.find((item) => item.itemId != null && usedItemIds.has(item.itemId));
+      const insertBefore = retainedItemByDesiredIndex.get(index);
       await withTimeout(new Promise<void>((resolve, reject) => {
-        player.queueInsert(futureItems, { insertBefore: firstRetainedFuture?.itemId }, (error) => error ? reject(error) : resolve());
+        player.queueInsert(futureItems, { insertBefore }, (error) => error ? reject(error) : resolve());
       }), 3_000, "Chromecast no respondió al insertar la nueva cola");
       if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
       status = await this.readQueueStatus(player);
@@ -441,17 +513,16 @@ export class CastController {
     const currentItems = status.items ?? [];
     const currentPositionAfterInsert = currentItems.findIndex((item) => item.itemId === currentItemId);
     const currentFutureAfterInsert = currentPositionAfterInsert >= 0 ? currentItems.slice(currentPositionAfterInsert + 1) : [];
-    const desiredKeys = new Map<string, number>();
+    const desiredTrackCounts = new Map<string, number>();
     for (const track of desiredFuture) {
-      const key = `${track.id}\0${track.castUrl}`;
-      desiredKeys.set(key, (desiredKeys.get(key) ?? 0) + 1);
+      desiredTrackCounts.set(track.id, (desiredTrackCounts.get(track.id) ?? 0) + 1);
     }
     const obsoleteFutureIds: number[] = [];
     for (const item of currentFutureAfterInsert) {
       if (item.itemId == null) continue;
-      const key = `${item.media?.customData?.trackId ?? ""}\0${item.media?.contentId ?? ""}`;
-      const remaining = desiredKeys.get(key) ?? 0;
-      if (remaining > 0) desiredKeys.set(key, remaining - 1);
+      const trackId = item.media?.customData?.trackId ?? "";
+      const remaining = desiredTrackCounts.get(trackId) ?? 0;
+      if (remaining > 0) desiredTrackCounts.set(trackId, remaining - 1);
       else obsoleteFutureIds.push(item.itemId);
     }
     const obsoleteItemIds = [
@@ -459,6 +530,7 @@ export class CastController {
       ...obsoleteFutureIds
     ];
     if (obsoleteItemIds.length > 0) {
+      this.reportDiagnostic("queue-remove", { currentItemId, obsoleteItemIds });
       await withTimeout(new Promise<void>((resolve, reject) => {
         player.queueRemove(obsoleteItemIds, {}, (error) => error ? reject(error) : resolve());
       }), 3_000, "Chromecast no respondió al actualizar la cola");
@@ -479,8 +551,7 @@ export class CastController {
     for (const track of desiredFuture) {
       const match = refreshedFuture.find((item) => item.itemId != null
         && !reorderedUsed.has(item.itemId)
-        && item.media?.customData?.trackId === track.id
-        && item.media?.contentId === track.castUrl);
+        && item.media?.customData?.trackId === track.id);
       if (match?.itemId != null) {
         reorderedUsed.add(match.itemId);
         reorderedItemIds.push(match.itemId);
@@ -490,6 +561,7 @@ export class CastController {
     const orderChanged = reorderedItemIds.length > 1
       && reorderedItemIds.some((itemId, index) => currentFutureIds[index] !== itemId);
     if (orderChanged) {
+      this.reportDiagnostic("queue-reorder", { currentItemId, reorderedItemIds });
       await withTimeout(new Promise<void>((resolve, reject) => {
         player.queueReorder(reorderedItemIds, {}, (error) => error ? reject(error) : resolve());
       }), 3_000, "Chromecast no respondió al reordenar la cola");
@@ -498,13 +570,9 @@ export class CastController {
     }
 
     const desiredRepeatMode = castRepeatMode(request.repeatMode);
-    if (status.repeatMode !== desiredRepeatMode) {
-      status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
-        player.queueUpdate([], { repeatMode: desiredRepeatMode }, (error, result) => {
-          if (error) reject(error);
-          else resolve((result ?? {}) as CastMediaStatus);
-        });
-      }), 3_000, "Chromecast no respondió al actualizar el modo de repetición");
+    const shuffleChanged = this.state.customReceiver === true && status.queueData?.shuffle !== request.shuffle;
+    if (status.repeatMode !== desiredRepeatMode || shuffleChanged) {
+      status = await this.sendQueueModeUpdate(player, request);
     }
     if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
     this.applyStatus(status);
@@ -519,6 +587,30 @@ export class CastController {
         else resolve((result ?? {}) as CastMediaStatus);
       });
     }), 3_000, "Chromecast no respondió al consultar la cola");
+  }
+
+  private sendQueueModeUpdate(player: DefaultMediaReceiver, request: CastQueueRequest): Promise<CastMediaStatus> {
+    return withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+      if (this.state.customReceiver) {
+        // castv2-client predates CAF's shuffle field, so send the protocol
+        // request directly. customData lets our receiver distinguish the
+        // desktop's already-ordered queue from a Google Home shuffle request.
+        player.media.sessionRequest({
+          type: "QUEUE_UPDATE",
+          repeatMode: castRepeatMode(request.repeatMode),
+          shuffle: request.shuffle,
+          customData: { flacCastSender: true }
+        }, (error, result) => {
+          if (error) reject(error);
+          else resolve((result ?? {}) as CastMediaStatus);
+        });
+        return;
+      }
+      player.queueUpdate([], { repeatMode: castRepeatMode(request.repeatMode) }, (error, result) => {
+        if (error) reject(error);
+        else resolve((result ?? {}) as CastMediaStatus);
+      });
+    }), 3_000, "Chromecast no respondió al actualizar los modos de cola");
   }
 
   async command(command: "play" | "pause"): Promise<CastState> {
@@ -603,22 +695,58 @@ export class CastController {
   }
 
   private applyStatus(status: CastMediaStatus): void {
+    const previousTrackId = this.state.currentTrackId;
+    const reportedTrackId = status.media?.customData?.trackId;
+    const trackChanged = Boolean(reportedTrackId && reportedTrackId !== this.state.currentTrackId);
     this.state = {
       ...this.state,
       error: undefined,
       playerState: status.playerState ?? this.state.playerState,
-      idleReason: status.idleReason,
-      currentTime: status.currentTime ?? this.state.currentTime,
-      duration: status.media?.duration ?? this.state.duration,
-      currentTrackId: status.media?.customData?.trackId ?? this.state.currentTrackId,
+      // During a receiver-side queue transition Chromecast can report the new
+      // media item before it reports that item's clock. Do not carry FINISHED,
+      // the end position, or the duration from the previous item into the new
+      // track: the renderer would otherwise advance the queue a second time.
+      idleReason: trackChanged && status.playerState !== "IDLE" ? undefined : status.idleReason,
+      currentTime: status.currentTime ?? (trackChanged ? 0 : this.state.currentTime),
+      duration: status.media?.duration ?? (trackChanged ? undefined : this.state.duration),
+      currentTrackId: reportedTrackId ?? this.state.currentTrackId,
       deliveryMode: status.media?.customData?.deliveryMode ?? this.state.deliveryMode,
       deliveryBits: status.media?.customData?.deliveryBits ?? this.state.deliveryBits,
       deliverySampleRate: status.media?.customData?.deliverySampleRate ?? this.state.deliverySampleRate,
       repeatMode: status.repeatMode === "REPEAT_SINGLE" ? "single"
         : status.repeatMode === "REPEAT_ALL" || status.repeatMode === "REPEAT_ALL_AND_SHUFFLE" ? "all"
-          : status.repeatMode === "REPEAT_OFF" ? "off" : this.state.repeatMode
+          : status.repeatMode === "REPEAT_OFF" ? "off" : this.state.repeatMode,
+      shuffle: status.queueData?.shuffle ?? (status.repeatMode === "REPEAT_ALL_AND_SHUFFLE" ? true : this.state.shuffle),
+      queueItems: status.items?.length
+        ? status.items.flatMap((item) => {
+          const trackId = item.media?.customData?.trackId;
+          return trackId ? [{
+            trackId,
+            current: item.itemId != null && item.itemId === status.currentItemId,
+            group: item.media?.customData?.castQueueGroup,
+            order: item.media?.customData?.castQueueOrder
+          }] : [];
+        })
+        : this.state.queueItems
     };
     this.stateUpdatedAt = Date.now();
+    const diagnostic = {
+      previousTrackId,
+      trackId: this.state.currentTrackId,
+      reportedTrackId,
+      playerState: this.state.playerState,
+      idleReason: this.state.idleReason,
+      supportedMediaCommands: status.supportedMediaCommands,
+      currentItemId: status.currentItemId,
+      repeatMode: this.state.repeatMode,
+      shuffle: this.state.shuffle,
+      queue: (status.items ?? []).map((item) => ({ itemId: item.itemId, trackId: item.media?.customData?.trackId }))
+    };
+    const diagnosticSignature = JSON.stringify(diagnostic);
+    if (diagnosticSignature !== this.lastStatusDiagnosticSignature) {
+      this.lastStatusDiagnosticSignature = diagnosticSignature;
+      this.reportDiagnostic("media-status", diagnostic);
+    }
     // MEDIA_STATUS.volume belongs to the media session and is commonly 1.0.
     // Receiver volume comes from Client status/getVolume and must remain the
     // source of truth for the physical soundbar slider.
@@ -653,6 +781,40 @@ export class CastController {
 
   private handleSessionClosed(player: DefaultMediaReceiver): void {
     if (this.player !== player) return;
+    // Google Home implements Stop by pausing first and closing the Default
+    // Media Receiver a few seconds later. Treat any close from a paused state
+    // as an intentional remote stop; reconnecting would unexpectedly resume
+    // audio the user explicitly stopped from another device.
+    if (this.state.playerState === "PAUSED") {
+      const stoppedState = this.getState();
+      const client = this.client;
+      this.client = undefined;
+      this.player = undefined;
+      this.lastLoadedContent = undefined;
+      this.queueAllowed = true;
+      try { client?.close(); } catch { /* Google Home already closed the session. */ }
+      this.state = {
+        ...stoppedState,
+        connected: false,
+        playerState: "IDLE",
+        idleReason: "CANCELLED",
+        queueActive: false,
+        error: undefined
+      };
+      this.stateUpdatedAt = Date.now();
+      this.reportDiagnostic("session-closed", {
+        recoverable: false,
+        reason: "remote-stop-after-pause",
+        trackId: stoppedState.currentTrackId
+      });
+      return;
+    }
+    this.reportDiagnostic("session-closed", {
+      recoverable: true,
+      reason: "unexpected-close",
+      trackId: this.state.currentTrackId,
+      playerState: this.state.playerState
+    });
     this.invalidateSession("La barra cerró inesperadamente la sesión Cast.");
   }
 
@@ -730,6 +892,12 @@ export class CastController {
       if (!stable || this.player !== player) return false;
       this.lastLoadedContent = { contentId: currentContentId, contentType: currentContentType };
       this.state = { ...this.state, queueActive: true };
+      if (this.state.customReceiver && this.state.shuffle !== request.shuffle) {
+        const modeStatus = await this.sendQueueModeUpdate(player, request);
+        if (this.player !== player) return false;
+        this.applyStatus(modeStatus);
+        this.state = { ...this.state, queueActive: true };
+      }
       return true;
     } catch (error) {
       if (this.player === player) console.warn(`[cast] queueLoad failed (${currentContentType})`, error);
@@ -925,7 +1093,9 @@ function createQueueCustomData(track: CastTrack, deliveryMode?: CastDeliveryMode
     trackId: track.id,
     deliveryMode: deliveryMode ?? track.castDeliveryMode,
     deliveryBits: track.castDeliveryBits ?? track.bitsPerSample,
-    deliverySampleRate: track.castDeliverySampleRate ?? track.sampleRate
+    deliverySampleRate: track.castDeliverySampleRate ?? track.sampleRate,
+    castQueueGroup: track.castQueueGroup,
+    castQueueOrder: track.castQueueOrder
   };
 }
 

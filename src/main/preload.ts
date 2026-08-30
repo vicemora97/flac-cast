@@ -38,6 +38,7 @@ const api: HiresApi = {
   prepareLocalTrack: (track) => ipcRenderer.invoke("local:prepare-track", track),
   disconnectCast: () => ipcRenderer.invoke("cast:disconnect"),
   getMediaAccess: () => ipcRenderer.invoke("media:last-access"),
+  logCastDiagnostic: (event, data) => ipcRenderer.send("cast:diagnostic", event, data),
   getLyrics: (track) => ipcRenderer.invoke("lyrics:get", track),
   setTaskbarPlaybackState: (state) => ipcRenderer.send("playback:taskbar-state", state),
   onTaskbarPlaybackCommand: (listener) => {

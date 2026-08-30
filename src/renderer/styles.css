@@ -324,6 +324,86 @@ audio { display: none; }
 .context-menu-item.divider { margin-top: 5px; padding-top: 11px; border-top: 1px solid var(--line); border-radius: 0 0 7px 7px; }
 .context-menu-item.danger { color: #ffaaa0; }
 .context-menu-item .control-icon { width: 17px; height: 17px; }
+
+/* HDR-enhanced mode keeps the SDR layout and luminance structure intact. It
+   expands only accents and compact highlights so local-dimming displays do
+   not turn large UI surfaces into distracting bright zones. */
+html.hdr-enhanced {
+  dynamic-range-limit: constrained;
+  --accent: #d0ff68;
+  --muted: #a0a99a;
+  --panel: #151915;
+  --line: #343c31;
+  --hdr-accent-glow: rgba(205, 255, 95, .2);
+  --hdr-surface-highlight: rgba(231, 255, 203, .055);
+  background: #0b0e0b;
+}
+
+@supports (color: color(display-p3 1 1 1)) {
+  html.hdr-enhanced {
+    --accent: color(display-p3 .76 1 .28);
+    --muted: color(display-p3 .63 .67 .59);
+    --panel: color(display-p3 .075 .095 .073);
+    --line: color(display-p3 .18 .22 .16);
+    --hdr-accent-glow: color(display-p3 .68 1 .2 / .2);
+    --hdr-surface-highlight: color(display-p3 .85 1 .72 / .055);
+  }
+}
+
+html.hdr-enhanced body {
+  background:
+    radial-gradient(circle at 14% -8%, color-mix(in oklab, var(--accent) 7%, transparent) 0, transparent 34%),
+    #0b0e0b;
+}
+html.hdr-enhanced header {
+  border-color: color-mix(in oklab, var(--accent) 14%, var(--line));
+  background: linear-gradient(110deg, var(--hdr-surface-highlight), transparent 38%);
+}
+html.hdr-enhanced .eyebrow,
+html.hdr-enhanced .quality,
+html.hdr-enhanced .about-version {
+  text-shadow: 0 0 13px var(--hdr-accent-glow);
+}
+html.hdr-enhanced .tab-indicator,
+html.hdr-enhanced header button,
+html.hdr-enhanced .cast.connected,
+html.hdr-enhanced .queue-button.active,
+html.hdr-enhanced .queue-panel-button.active {
+  box-shadow: 0 0 18px var(--hdr-accent-glow), inset 0 1px rgba(255, 255, 255, .22);
+}
+html.hdr-enhanced .track-row.current-track {
+  background: color-mix(in oklab, var(--accent) 10%, var(--panel));
+  box-shadow: inset 3px 0 var(--accent), inset 0 1px var(--hdr-surface-highlight);
+}
+html.hdr-enhanced .transport-player {
+  border-color: color-mix(in oklab, var(--player-accent) 34%, var(--line));
+  background: linear-gradient(100deg, color-mix(in oklab, var(--player-accent) 13%, #171b17), #171b17 46%);
+  box-shadow: inset 0 1px var(--hdr-surface-highlight), 0 8px 28px rgba(0, 0, 0, .22);
+}
+html.hdr-enhanced .transport-toggle {
+  background: color-mix(in oklab, var(--player-accent) 88%, white 12%);
+  box-shadow: 0 0 16px color-mix(in oklab, var(--player-accent) 24%, transparent);
+}
+html.hdr-enhanced .timeline {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--player-accent) 88%, white 12%) 0 var(--range-progress), #41493f var(--range-progress) 100%);
+}
+html.hdr-enhanced .timeline::-webkit-slider-thumb,
+html.hdr-enhanced .volume-slider::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--player-accent) 72%, transparent), 0 0 12px color-mix(in oklab, var(--player-accent) 28%, transparent);
+}
+html.hdr-enhanced footer,
+html.hdr-enhanced .cast-panel,
+html.hdr-enhanced .queue-panel,
+html.hdr-enhanced .library-panel,
+html.hdr-enhanced .lyrics-panel {
+  border-color: color-mix(in oklab, var(--accent) 12%, var(--line));
+  background-color: rgba(13, 16, 13, .965);
+  box-shadow: inset 0 1px var(--hdr-surface-highlight), 0 24px 70px rgba(0, 0, 0, .55);
+}
+html.hdr-enhanced .artwork-player {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .48), 0 0 18px color-mix(in oklab, var(--player-accent) 12%, transparent);
+}
+
 @media (max-width: 1100px) {
   .library-toolbar { grid-template-columns: auto minmax(220px, 1fr) auto auto; }
   .status { grid-column: 1 / -1; }

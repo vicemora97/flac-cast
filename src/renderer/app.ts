@@ -1,4 +1,4 @@
-import type { CastDevice, CastState, LibraryResult, Playlist, SyncedLyrics, Track } from "../shared/contracts.js";
+import type { CastDevice, CastState, CastTrack, LibraryResult, Playlist, SyncedLyrics, Track } from "../shared/contracts.js";
 import { getLanguage, normalizeLanguage, setLanguage, t, type AppLanguage } from "./i18n.js";
 import type { SearchTrackRecord, SearchWorkerRequest, SearchWorkerResponse } from "./search-types.js";
 
@@ -22,6 +22,7 @@ type RepeatMode = "off" | "context" | "track";
 type LibraryView = "tracks" | "albums" | "artists" | "playlists" | "about";
 type TrackSort = "artist" | "title" | "album" | "quality" | "added";
 type SortDirection = "asc" | "desc";
+type DisplayMode = "auto" | "sdr" | "hdr";
 type PlaybackSource = "scheduled" | "manual";
 type PlaybackHistoryEntry = { track: Track; source: PlaybackSource; scheduledIndex: number };
 type LibraryLocation =
@@ -34,8 +35,10 @@ type LibraryHistoryEntry = { location: LibraryLocation; scrollY: number };
 
 const SEARCH_DEBOUNCE_MS = 90;
 const SEARCH_RENDER_LIMIT = 200;
+const hdrDynamicRangeQuery = window.matchMedia("(dynamic-range: high)");
 
 const languageSelect = document.querySelector<HTMLSelectElement>("#language")!;
+const displayModeSelect = document.querySelector<HTMLSelectElement>("#display-mode")!;
 const chooseButton = document.querySelector<HTMLButtonElement>("#choose-folder")!;
 const libraryPanel = document.querySelector<HTMLElement>("#library-panel")!;
 const libraryClose = document.querySelector<HTMLButtonElement>("#library-close")!;
@@ -154,12 +157,14 @@ let castPrewarmTimer: ReturnType<typeof setTimeout> | undefined;
 let lastCastPrewarmSignature = "";
 let castQueueSyncTimer: ReturnType<typeof setTimeout> | undefined;
 let lastCastQueueSignature = "";
+let castQueueModeSyncCount = 0;
 let castRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 let castRefreshInFlight = false;
 let castAutoRecoveryKey = "";
 let castTransportRecoveryInFlight = false;
 let castQueueAdvanceTimer: ReturnType<typeof setTimeout> | undefined;
 let castQueueAdvanceKey = "";
+let castPlaybackObservedTrackId: string | undefined;
 let castSessionGeneration = 0;
 let lastCastVolumeRefreshAt = 0;
 let lastDeviceRefreshAt = 0;
@@ -174,6 +179,10 @@ let searchQuery = "";
 let searchWorker: Worker | undefined;
 let searchWorkerFailed = false;
 let searchIndexReady = false;
+
+function tracePlayback(event: string, data: Record<string, unknown> = {}): void {
+  window.hires.logCastDiagnostic(event, data);
+}
 let searchIndexGeneration = 0;
 let searchRequestId = 0;
 let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -196,6 +205,7 @@ const libraryBackHistory: LibraryHistoryEntry[] = [];
 const libraryForwardHistory: LibraryHistoryEntry[] = [];
 
 initializeUiScale();
+initializeDisplayMode();
 initializeLanguage();
 initializeSearchWorker();
 void window.hires.getAppVersion().then((version) => {
@@ -225,6 +235,10 @@ trackOrderSelect.addEventListener("change", () => {
   else renderCurrentView();
 });
 languageSelect.addEventListener("change", () => changeLanguage(normalizeLanguage(languageSelect.value)));
+displayModeSelect.addEventListener("change", () => applyDisplayMode(normalizeDisplayMode(displayModeSelect.value)));
+hdrDynamicRangeQuery.addEventListener("change", () => {
+  if (normalizeDisplayMode(localStorage.getItem("flac-cast-display-mode")) === "auto") applyDisplayMode("auto", false);
+});
 tracksTab.addEventListener("click", () => openLibraryView("tracks"));
 albumsTab.addEventListener("click", () => openLibraryView("albums"));
 artistsTab.addEventListener("click", () => openLibraryView("artists"));
@@ -246,7 +260,7 @@ previousTrackButton.addEventListener("click", () => void playPrevious());
 nextTrackButton.addEventListener("click", () => void playNext());
 shuffleButton.addEventListener("click", toggleShuffle);
 repeatButton.addEventListener("click", toggleRepeat);
-player.addEventListener("ended", () => void playNext(true));
+player.addEventListener("ended", () => void playNext(true, "local-ended"));
 player.addEventListener("play", updateTaskbarControls);
 player.addEventListener("pause", updateTaskbarControls);
 player.addEventListener("play", renderTrackPlaybackState);
@@ -1702,7 +1716,10 @@ function clearUpcomingQueue(): void {
 }
 
 async function playTrack(track: Track, context?: Track[], preserveQueue = false, source: PlaybackSource = "scheduled"): Promise<void> {
-  if (trackChangeInProgress) return;
+  if (trackChangeInProgress) {
+    tracePlayback("play-track-ignored", { requestedTrackId: track.id, selectedTrackId: selectedTrack?.id });
+    return;
+  }
   trackChangeInProgress = true;
   try {
     if (!preserveQueue) {
@@ -1712,10 +1729,20 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
     } else {
       currentPlaybackSource = source;
     }
+    tracePlayback("play-track", {
+      previousTrackId: selectedTrack?.id,
+      trackId: track.id,
+      source: currentPlaybackSource,
+      queueIndex,
+      manualTrackIds: manualQueue.map((item) => item.id),
+      scheduledNextTrackId: playbackQueue[queueIndex + 1]?.id,
+      castConnected: currentCastState.connected
+    });
     selectedTrack = track;
     renderTrackPlaybackState();
     prepareLyricsForTrack(track);
     autoAdvancedTrackId = undefined;
+    castPlaybackObservedTrackId = undefined;
     updateQueueButtons();
     nowTitle.textContent = track.title;
     setNowPlayingArtist(displayArtist(track.artist));
@@ -1751,7 +1778,7 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
   }
 }
 
-function buildCastQueuePlan(): { tracks: Track[]; currentIndex: number } {
+function buildCastQueuePlan(): { tracks: CastTrack[]; currentIndex: number } {
   if (!selectedTrack) return { tracks: [], currentIndex: 0 };
   const previous = repeatMode === "context" ? [] : playbackHistory.slice(-5).map((entry) => entry.track);
   let scheduled = playbackQueue.slice(Math.max(0, queueIndex + 1));
@@ -1765,22 +1792,39 @@ function buildCastQueuePlan(): { tracks: Track[]; currentIndex: number } {
       ];
     }
   }
-  const upcoming = [...manualQueue, ...scheduled];
+  const contextOrder = new Map(playbackContext.map((track, index) => [track.id, index]));
+  const annotate = (track: Track, group: NonNullable<CastTrack["castQueueGroup"]>, fallbackOrder: number): CastTrack => ({
+    ...track,
+    castQueueGroup: group,
+    castQueueOrder: contextOrder.get(track.id) ?? fallbackOrder
+  });
+  const annotatedPrevious = previous.map((track, index) => annotate(track, "history", -previous.length + index));
+  const annotatedCurrent = annotate(selectedTrack, "current", contextOrder.get(selectedTrack.id) ?? 0);
+  const upcoming: CastTrack[] = [
+    ...manualQueue.map((track, index) => annotate(track, "manual", index)),
+    ...scheduled.map((track, index) => annotate(track, "scheduled", contextOrder.get(track.id) ?? playbackContext.length + index))
+  ];
   const available = Math.max(0, 40 - previous.length - 1);
   return {
-    tracks: [...previous, selectedTrack, ...upcoming.slice(0, available)],
+    tracks: [...annotatedPrevious, annotatedCurrent, ...upcoming.slice(0, available)],
     currentIndex: previous.length
   };
 }
 
 function castQueueSignature(): string {
   const plan = buildCastQueuePlan();
-  return `${currentCastState.deviceId ?? "cast"}:${repeatMode}:${plan.currentIndex}:${plan.tracks.map((track) => track.id).join("|")}`;
+  return `${currentCastState.deviceId ?? "cast"}:${repeatMode}:${shuffleEnabled}:${plan.currentIndex}:${plan.tracks.map((track) => track.id).join("|")}`;
 }
 
 async function castCurrentQueue(startTimeSeconds = 0): Promise<CastState> {
   const plan = buildCastQueuePlan();
   if (plan.tracks.length === 0) throw new Error("The playback queue is empty");
+  tracePlayback("cast-current-queue", {
+    selectedTrackId: selectedTrack?.id,
+    currentIndex: plan.currentIndex,
+    trackIds: plan.tracks.map((track) => track.id),
+    startTimeSeconds
+  });
   const signature = castQueueSignature();
   lastCastQueueSignature = signature;
   try {
@@ -1788,7 +1832,8 @@ async function castCurrentQueue(startTimeSeconds = 0): Promise<CastState> {
       tracks: plan.tracks,
       currentIndex: plan.currentIndex,
       startTimeSeconds,
-      repeatMode: repeatMode === "track" ? "single" : repeatMode === "context" ? "all" : "off"
+      repeatMode: repeatMode === "track" ? "single" : repeatMode === "context" ? "all" : "off",
+      shuffle: shuffleEnabled
     });
   } catch (error) {
     if (lastCastQueueSignature === signature) lastCastQueueSignature = "";
@@ -1813,7 +1858,8 @@ function scheduleCastQueueSync(): void {
     void window.hires.updateCastQueue({
       tracks: plan.tracks,
       currentIndex: plan.currentIndex,
-      repeatMode: repeatMode === "track" ? "single" : repeatMode === "context" ? "all" : "off"
+      repeatMode: repeatMode === "track" ? "single" : repeatMode === "context" ? "all" : "off",
+      shuffle: shuffleEnabled
     }).then((state) => {
       if (generation !== castSessionGeneration) return;
       currentCastState = state;
@@ -1830,6 +1876,12 @@ function adoptRemoteCastTrack(trackId: string | undefined): void {
   cancelCastQueueAdvanceWatchdog();
   const track = libraryTrackById.get(trackId);
   if (!track) return;
+  tracePlayback("adopt-remote-track", {
+    previousTrackId: selectedTrack?.id,
+    trackId,
+    queueIndex,
+    manualTrackIds: manualQueue.map((item) => item.id)
+  });
   if (selectedTrack) rememberCurrentForPrevious();
   const manualIndex = manualQueue.findIndex((item) => item.id === trackId);
   if (manualIndex >= 0) {
@@ -1844,6 +1896,10 @@ function adoptRemoteCastTrack(trackId: string | undefined): void {
   }
   selectedTrack = track;
   autoAdvancedTrackId = undefined;
+  // A MEDIA_STATUS frame can contain the new queue item's ID while still
+  // carrying terminal timing from the previous item. Require a fresh PLAYING
+  // observation before this track is ever allowed to trigger auto-advance.
+  castPlaybackObservedTrackId = undefined;
   nowTitle.textContent = track.title;
   setNowPlayingArtist(displayArtist(track.artist));
   replaceArtwork(nowArtwork, track.artworkUrl);
@@ -1857,6 +1913,78 @@ function adoptRemoteCastTrack(trackId: string | undefined): void {
   // manual entries do not become part of a repeated list.
   lastCastQueueSignature = "";
   updateQueueButtons();
+}
+
+function adoptRemoteCastQueueModes(state: CastState): void {
+  if (!state.connected || !state.customReceiver || state.queueActive !== true || castQueueModeSyncCount > 0 || trackChangeInProgress) return;
+
+  const remoteRepeat: RepeatMode | undefined = state.repeatMode === "single"
+    ? "track"
+    : state.repeatMode === "all"
+      ? "context"
+      : state.repeatMode === "off"
+        ? "off"
+        : undefined;
+  let changed = false;
+  if (typeof state.shuffle === "boolean" && shuffleEnabled !== state.shuffle) {
+    shuffleEnabled = state.shuffle;
+    changed = true;
+  }
+  if (remoteRepeat && repeatMode !== remoteRepeat) {
+    repeatMode = remoteRepeat;
+    changed = true;
+  }
+  if (adoptRemoteCastQueueOrder(state.queueItems)) changed = true;
+  if (!changed) return;
+
+  lastCastQueueSignature = castQueueSignature();
+  renderShuffleAndRepeatLabels();
+  updateQueueButtons();
+  savePlaybackSession();
+}
+
+function adoptRemoteCastQueueOrder(items: CastState["queueItems"]): boolean {
+  if (!selectedTrack || !items || items.length === 0) return false;
+  let currentPosition = items.findIndex((item) => item.current);
+  if (currentPosition < 0) currentPosition = items.findIndex((item) => item.trackId === selectedTrack!.id);
+  const afterCurrent = items.slice(currentPosition >= 0 ? currentPosition + 1 : 0);
+  const remoteScheduledIds = afterCurrent
+    .filter((item) => item.group === "scheduled")
+    .map((item) => item.trackId);
+  if (remoteScheduledIds.length === 0) return false;
+
+  const takeInRemoteOrder = (pool: Track[]): { ordered: Track[]; remaining: Track[] } => {
+    const remaining = [...pool];
+    const ordered: Track[] = [];
+    for (const trackId of remoteScheduledIds) {
+      const index = remaining.findIndex((track) => track.id === trackId);
+      if (index >= 0) ordered.push(...remaining.splice(index, 1));
+    }
+    return { ordered, remaining };
+  };
+
+  if (currentPlaybackSource === "scheduled") {
+    const pool = playbackQueue.filter((track) => track.id !== selectedTrack!.id);
+    const { ordered, remaining } = takeInRemoteOrder(pool);
+    const nextQueue = [selectedTrack, ...ordered, ...remaining];
+    const changed = nextQueue.some((track, index) => playbackQueue[index]?.id !== track.id)
+      || nextQueue.length !== playbackQueue.length
+      || queueIndex !== 0;
+    if (changed) {
+      playbackQueue = nextQueue;
+      queueIndex = 0;
+    }
+    return changed;
+  }
+
+  const futureStart = Math.max(0, queueIndex + 1);
+  const prefix = playbackQueue.slice(0, futureStart);
+  const { ordered, remaining } = takeInRemoteOrder(playbackQueue.slice(futureStart));
+  const nextQueue = [...prefix, ...ordered, ...remaining];
+  const changed = nextQueue.some((track, index) => playbackQueue[index]?.id !== track.id)
+    || nextQueue.length !== playbackQueue.length;
+  if (changed) playbackQueue = nextQueue;
+  return changed;
 }
 
 async function refreshCastDevices(): Promise<number> {
@@ -1893,6 +2021,19 @@ async function refreshCastState(render = true): Promise<void> {
     currentCastState = await window.hires.getCastState(refreshVolume);
     if (refreshVolume) lastCastVolumeRefreshAt = Date.now();
     adoptRemoteCastTrack(currentCastState.currentTrackId);
+    adoptRemoteCastQueueModes(currentCastState);
+    const duration = currentCastState.duration ?? selectedTrack?.durationSeconds;
+    const currentTime = currentCastState.currentTime ?? 0;
+    if (
+      currentCastState.connected
+      && selectedTrack
+      && currentCastState.currentTrackId === selectedTrack.id
+      && currentCastState.playerState === "PLAYING"
+      && currentCastState.idleReason !== "FINISHED"
+      && (duration == null || currentTime < duration - 0.5)
+    ) {
+      castPlaybackObservedTrackId = selectedTrack.id;
+    }
     // Repeat is a Flac Cast session preference. Receivers can briefly report
     // REPEAT_OFF while loading a new queue item; treating that transient value
     // as user intent made the repeat button turn itself off after track changes.
@@ -1901,6 +2042,7 @@ async function refreshCastState(render = true): Promise<void> {
       previousCastState.connected
       && !currentCastState.connected
       && Boolean(currentCastState.error)
+      && previousCastState.playerState !== "PAUSED"
       && currentCastState.deviceId
       && selectedTrack
       && !trackChangeInProgress
@@ -1926,21 +2068,25 @@ async function refreshCastState(render = true): Promise<void> {
       }
     }
     if (render) renderCastState();
-    const duration = currentCastState.duration ?? selectedTrack?.durationSeconds;
     const finished = currentCastState.idleReason === "FINISHED"
-      || (currentCastState.playerState !== "BUFFERING" && duration != null && (currentCastState.currentTime ?? 0) >= duration - 0.25);
+      || (currentCastState.playerState !== "BUFFERING" && duration != null && currentTime >= duration - 0.25);
+    const terminalStateBelongsToSelectedTrack = Boolean(
+      selectedTrack
+      && currentCastState.currentTrackId === selectedTrack.id
+      && castPlaybackObservedTrackId === selectedTrack.id
+    );
     // A receiver-side queue advances by itself and reports the new track through
     // currentTrackId. Sending our own replacement QUEUE_LOAD at the same boundary
     // starts that item twice: once from the receiver and once from the renderer.
     // Only the single-item compatibility pipeline needs desktop auto-advance.
     const receiverOwnsAutoAdvance = currentCastState.queueActive === true;
-    if (receiverOwnsAutoAdvance && finished && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
+    if (receiverOwnsAutoAdvance && finished && terminalStateBelongsToSelectedTrack && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
       scheduleCastQueueAdvanceWatchdog(selectedTrack.id);
-    } else if (!receiverOwnsAutoAdvance && finished && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
+    } else if (!receiverOwnsAutoAdvance && finished && terminalStateBelongsToSelectedTrack && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
       cancelCastQueueAdvanceWatchdog();
       autoAdvancedTrackId = selectedTrack.id;
-      void playNext(true);
-    } else if (!finished || !currentCastState.connected) {
+      void playNext(true, "cast-terminal");
+    } else if (!finished || !terminalStateBelongsToSelectedTrack || !currentCastState.connected) {
       cancelCastQueueAdvanceWatchdog();
     }
     if (currentCastState.playerState === "BUFFERING") {
@@ -1972,12 +2118,13 @@ function scheduleCastQueueAdvanceWatchdog(trackId: string): void {
       adoptRemoteCastTrack(latest.currentTrackId);
       if (!latest.connected || latest.queueActive !== true || selectedTrack?.id !== trackId) return;
       if (latest.currentTrackId && latest.currentTrackId !== trackId) return;
+      if (castPlaybackObservedTrackId !== trackId) return;
       const duration = latest.duration ?? selectedTrack.durationSeconds;
       const stillAtEnd = latest.idleReason === "FINISHED"
         || (duration != null && (latest.currentTime ?? 0) >= duration - 0.25);
       if (!stillAtEnd || latest.playerState === "BUFFERING") return;
       autoAdvancedTrackId = trackId;
-      await playNext(true);
+      await playNext(true, "cast-watchdog");
     } catch (error) {
       console.warn("Cast queue advance watchdog did not succeed", error);
     } finally {
@@ -2018,6 +2165,7 @@ function resetCastSessionTracking(): void {
   lastCastQueueSignature = "";
   lastCastPrewarmSignature = "";
   autoAdvancedTrackId = undefined;
+  castPlaybackObservedTrackId = undefined;
 }
 
 function scheduleCastRefresh(delay?: number): void {
@@ -2594,7 +2742,21 @@ function setPlaybackContext(track: Track, context: Track[]): void {
   }
 }
 
-async function playNext(automatic = false): Promise<void> {
+async function playNext(automatic = false, trigger = "command"): Promise<void> {
+  tracePlayback("play-next", {
+    automatic,
+    trigger,
+    selectedTrackId: selectedTrack?.id,
+    source: currentPlaybackSource,
+    queueIndex,
+    manualTrackIds: manualQueue.map((track) => track.id),
+    scheduledNextTrackId: playbackQueue[queueIndex + 1]?.id,
+    trackChangeInProgress,
+    castConnected: currentCastState.connected,
+    castTrackId: currentCastState.currentTrackId,
+    castPlayerState: currentCastState.playerState,
+    castIdleReason: currentCastState.idleReason
+  });
   // Do not consume a FIFO entry until playTrack can accept the transition.
   // Cast status and local media events can request the same advance almost at
   // once; previously the second request could shift and silently lose a track.
@@ -2755,16 +2917,21 @@ function syncCastQueueModesWithoutReload(): void {
   if (currentCastState.queueActive !== true) return;
 
   const requestedRepeatMode = repeatMode;
+  const requestedShuffle = shuffleEnabled;
+  castQueueModeSyncCount += 1;
   void window.hires.updateCastQueueModes({
     tracks: plan.tracks,
     currentIndex: plan.currentIndex,
-    repeatMode: requestedRepeatMode === "track" ? "single" : requestedRepeatMode === "context" ? "all" : "off"
+    repeatMode: requestedRepeatMode === "track" ? "single" : requestedRepeatMode === "context" ? "all" : "off",
+    shuffle: requestedShuffle
   }).then((state) => {
     currentCastState = state;
     renderCastState();
   }).catch((error) => {
     if (lastCastQueueSignature === signature) lastCastQueueSignature = "";
     console.warn("Could not update the Cast queue modes", error);
+  }).finally(() => {
+    castQueueModeSyncCount = Math.max(0, castQueueModeSyncCount - 1);
   });
 }
 
@@ -3011,6 +3178,21 @@ function initializeUiScale(): void {
   const screenWidth = window.screen.availWidth;
   const scale = screenWidth >= 3000 ? 1.25 : screenWidth >= 2200 ? 1.15 : screenWidth >= 1700 ? 1.08 : 1;
   void applyUiScale(scale);
+}
+
+function normalizeDisplayMode(value: string | null | undefined): DisplayMode {
+  return value === "sdr" || value === "hdr" ? value : "auto";
+}
+
+function initializeDisplayMode(): void {
+  applyDisplayMode(normalizeDisplayMode(localStorage.getItem("flac-cast-display-mode")), false);
+}
+
+function applyDisplayMode(mode: DisplayMode, persist = true): void {
+  displayModeSelect.value = mode;
+  document.documentElement.dataset.displayMode = mode;
+  document.documentElement.classList.toggle("hdr-enhanced", mode === "hdr" || (mode === "auto" && hdrDynamicRangeQuery.matches));
+  if (persist) localStorage.setItem("flac-cast-display-mode", mode);
 }
 
 function initializeLanguage(): void {
