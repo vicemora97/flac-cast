@@ -40,6 +40,12 @@ declare module "castv2-client" {
     queueData?: { repeatMode?: "REPEAT_OFF" | "REPEAT_ALL" | "REPEAT_SINGLE" | "REPEAT_ALL_AND_SHUFFLE"; shuffle?: boolean; startIndex?: number; startTime?: number };
     repeatMode?: "REPEAT_OFF" | "REPEAT_ALL" | "REPEAT_SINGLE" | "REPEAT_ALL_AND_SHUFFLE";
     supportedMediaCommands?: number;
+    customData?: {
+      flacCastQueueModes?: {
+        repeatMode?: "REPEAT_OFF" | "REPEAT_ALL" | "REPEAT_SINGLE" | "REPEAT_ALL_AND_SHUFFLE";
+        shuffle?: boolean;
+      };
+    };
   };
 
   export class Client extends EventEmitter {

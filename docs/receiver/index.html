@@ -35,10 +35,12 @@
       | Command.QUEUE_SHUFFLE
       | Command.QUEUE_REPEAT;
     let shuffleActive = false;
+    let repeatActive = "REPEAT_OFF";
 
     class FlacCastQueue extends cast.framework.QueueBase {
       initialize(loadRequestData) {
         shuffleActive = loadRequestData.queueData?.shuffle === true;
+        repeatActive = loadRequestData.queueData?.repeatMode || "REPEAT_OFF";
         if (loadRequestData.queueData) return loadRequestData.queueData;
         const queueData = new cast.framework.messages.QueueData();
         if (loadRequestData.media) {
@@ -88,6 +90,7 @@
 
     playerManager.setMessageInterceptor(MessageType.QUEUE_UPDATE, (request) => {
       const shuffleChanged = typeof request.shuffle === "boolean";
+      const repeatChanged = typeof request.repeatMode === "string";
       if (shuffleChanged) {
         shuffleActive = request.shuffle;
         const desktopAlreadyOrdered = request.customData?.flacCastSender === true;
@@ -97,18 +100,30 @@
         request.shuffle = undefined;
         if (!desktopAlreadyOrdered) setTimeout(() => reorderFuture(shuffleActive), 0);
       }
-      if (request.customData?.flacCastSender === true
-        && (typeof request.repeatMode === "string" || shuffleChanged)) {
-        setTimeout(() => playerManager.broadcastStatus(true, request.requestId, undefined, true), 50);
+      if (repeatChanged) repeatActive = request.repeatMode;
+      // Publish every mode change after CAF has processed the request. This is
+      // needed for both connected media senders and Google Home's cloud sender.
+      if (repeatChanged || shuffleChanged) {
+        setTimeout(() => playerManager.broadcastStatus(true, request.requestId, {
+          flacCastQueueModes: { repeatMode: repeatActive, shuffle: shuffleActive }
+        }, true), 100);
       }
       return request;
     });
 
-    playerManager.setMessageInterceptor(MessageType.MEDIA_STATUS, (status) => {
+    function publishQueueModes(status) {
       status.queueData = status.queueData || new cast.framework.messages.QueueData();
+      status.repeatMode = repeatActive;
+      status.queueData.repeatMode = repeatActive;
       status.queueData.shuffle = shuffleActive;
+      status.customData = Object.assign({}, status.customData, {
+        flacCastQueueModes: { repeatMode: repeatActive, shuffle: shuffleActive }
+      });
       return status;
-    });
+    }
+
+    playerManager.setMessageInterceptor(MessageType.MEDIA_STATUS, publishQueueModes);
+    playerManager.setMessageInterceptor(MessageType.CLOUD_STATUS, publishQueueModes);
 
     context.start({
       enforceSupportedCommands: true,

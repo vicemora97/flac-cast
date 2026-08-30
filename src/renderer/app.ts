@@ -1916,7 +1916,8 @@ function adoptRemoteCastTrack(trackId: string | undefined): void {
 }
 
 function adoptRemoteCastQueueModes(state: CastState): void {
-  if (!state.connected || !state.customReceiver || state.queueActive !== true || castQueueModeSyncCount > 0 || trackChangeInProgress) return;
+  if (!state.connected || !state.customReceiver || castQueueModeSyncCount > 0 || trackChangeInProgress) return;
+  if (state.playerState !== "PLAYING" && state.playerState !== "PAUSED" && state.playerState !== "BUFFERING") return;
 
   const remoteRepeat: RepeatMode | undefined = state.repeatMode === "single"
     ? "track"

@@ -570,8 +570,8 @@ export class CastController {
     }
 
     const desiredRepeatMode = castRepeatMode(request.repeatMode);
-    const shuffleChanged = this.state.customReceiver === true && status.queueData?.shuffle !== request.shuffle;
-    if (status.repeatMode !== desiredRepeatMode || shuffleChanged) {
+    const shuffleChanged = this.state.customReceiver === true && reportedCastShuffle(status) !== request.shuffle;
+    if (reportedCastRepeatMode(status) !== desiredRepeatMode || shuffleChanged) {
       status = await this.sendQueueModeUpdate(player, request, status);
     }
     if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
@@ -591,9 +591,9 @@ export class CastController {
 
   private sendQueueModeUpdate(player: DefaultMediaReceiver, request: CastQueueRequest, currentStatus: CastMediaStatus): Promise<CastMediaStatus> {
     const desiredRepeatMode = castRepeatMode(request.repeatMode);
-    const currentRepeatMode = currentStatus.repeatMode ?? currentStatus.queueData?.repeatMode;
+    const currentRepeatMode = reportedCastRepeatMode(currentStatus);
     const repeatChanged = currentRepeatMode !== desiredRepeatMode;
-    const shuffleChanged = this.state.customReceiver === true && currentStatus.queueData?.shuffle !== request.shuffle;
+    const shuffleChanged = this.state.customReceiver === true && reportedCastShuffle(currentStatus) !== request.shuffle;
     if (!repeatChanged && !shuffleChanged) return Promise.resolve(currentStatus);
 
     return withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
@@ -720,10 +720,10 @@ export class CastController {
       deliveryMode: status.media?.customData?.deliveryMode ?? this.state.deliveryMode,
       deliveryBits: status.media?.customData?.deliveryBits ?? this.state.deliveryBits,
       deliverySampleRate: status.media?.customData?.deliverySampleRate ?? this.state.deliverySampleRate,
-      repeatMode: status.repeatMode === "REPEAT_SINGLE" ? "single"
-        : status.repeatMode === "REPEAT_ALL" || status.repeatMode === "REPEAT_ALL_AND_SHUFFLE" ? "all"
-          : status.repeatMode === "REPEAT_OFF" ? "off" : this.state.repeatMode,
-      shuffle: status.queueData?.shuffle ?? (status.repeatMode === "REPEAT_ALL_AND_SHUFFLE" ? true : this.state.shuffle),
+      repeatMode: reportedCastRepeatMode(status) === "REPEAT_SINGLE" ? "single"
+        : reportedCastRepeatMode(status) === "REPEAT_ALL" || reportedCastRepeatMode(status) === "REPEAT_ALL_AND_SHUFFLE" ? "all"
+          : reportedCastRepeatMode(status) === "REPEAT_OFF" ? "off" : this.state.repeatMode,
+      shuffle: reportedCastShuffle(status) ?? (reportedCastRepeatMode(status) === "REPEAT_ALL_AND_SHUFFLE" ? true : this.state.shuffle),
       queueItems: status.items?.length
         ? status.items.flatMap((item) => {
           const trackId = item.media?.customData?.trackId;
@@ -1132,6 +1132,18 @@ function appendRetryToken(sourceUrl: string): string {
 
 function castRepeatMode(mode: CastQueueRequest["repeatMode"]): string {
   return mode === "single" ? "REPEAT_SINGLE" : mode === "all" ? "REPEAT_ALL" : "REPEAT_OFF";
+}
+
+function reportedCastRepeatMode(status: CastMediaStatus): CastMediaStatus["repeatMode"] {
+  return status.customData?.flacCastQueueModes?.repeatMode
+    ?? status.repeatMode
+    ?? status.queueData?.repeatMode;
+}
+
+function reportedCastShuffle(status: CastMediaStatus): boolean | undefined {
+  return status.customData?.flacCastQueueModes?.shuffle
+    ?? status.queueData?.shuffle
+    ?? (status.repeatMode === "REPEAT_ALL_AND_SHUFFLE" ? true : undefined);
 }
 
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
