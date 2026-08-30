@@ -4,15 +4,27 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-08-30
+
 ### Added
 
+- Added a registered, branded Flac Cast Custom Web Receiver with native Cast queue, Previous/Next, repeat, shuffle, seek, and media-status integration.
+- Added an optional HDR-enhanced display mode with automatic, SDR, and HDR selections while preserving the existing SDR appearance by default.
 - Added a dedicated unpublished Google Cast development receiver and documented the validation, promotion, and rollback workflow for receiver releases.
 - Added a 512×512 official application icon suitable for Google Cast and other distribution surfaces.
 
 ### Changed
 
+- Google Cast playback now prefers the published Flac Cast receiver and retains Google's Default Media Receiver as a compatibility fallback.
+- Desktop and remote Cast controllers now exchange queue order, repeat, and shuffle state without rebuilding the playing item.
 - Source development runs now select the development Cast application automatically, while packaged builds continue to use the published production receiver.
 - GitHub Pages deployment now watches both the production and development receiver directories.
+
+### Fixed
+
+- Prevented shuffle and repeat updates from briefly stopping or reloading the current Cast track.
+- Stabilized Cast queue transitions, manual FIFO insertion, and status adoption so remote and desktop controls do not skip or double-start tracks.
+- Treated a remote Google Home Stop as intentional instead of automatically reconnecting and resuming playback.
 
 ## [1.0.7] - 2026-08-25
 
@@ -150,7 +162,8 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
-[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/vicemora97/flac-cast/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/vicemora97/flac-cast/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/vicemora97/flac-cast/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/vicemora97/flac-cast/compare/2de1eb9...v1.0.5
