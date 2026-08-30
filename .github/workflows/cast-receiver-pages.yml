@@ -1,0 +1,40 @@
+name: Deploy Cast receiver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/receiver/**
+      - .github/workflows/cast-receiver-pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: cast-receiver-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}receiver/
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload receiver site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: docs
+
+      - name: Deploy receiver site
+        id: deployment
+        uses: actions/deploy-pages@v4
