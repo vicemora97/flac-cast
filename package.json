@@ -35,7 +35,7 @@
     "electron": "43.4.0",
     "electron-winstaller": "5.4.4",
     "esbuild": "^0.25.0",
-    "typescript": "^5.9.0"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "bonjour-service": "^1.4.4",
