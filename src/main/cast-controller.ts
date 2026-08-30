@@ -428,7 +428,7 @@ export class CastController {
 
     // Repeat mode is a queue property and can be changed without replacing the
     // current media item.
-    const updated = await this.sendQueueModeUpdate(player, request);
+    const updated = await this.sendQueueModeUpdate(player, request, status);
     if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la repetición");
     this.applyStatus(updated);
     this.state = { ...this.state, queueActive: true };
@@ -572,7 +572,7 @@ export class CastController {
     const desiredRepeatMode = castRepeatMode(request.repeatMode);
     const shuffleChanged = this.state.customReceiver === true && status.queueData?.shuffle !== request.shuffle;
     if (status.repeatMode !== desiredRepeatMode || shuffleChanged) {
-      status = await this.sendQueueModeUpdate(player, request);
+      status = await this.sendQueueModeUpdate(player, request, status);
     }
     if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
     this.applyStatus(status);
@@ -589,24 +589,31 @@ export class CastController {
     }), 3_000, "Chromecast no respondió al consultar la cola");
   }
 
-  private sendQueueModeUpdate(player: DefaultMediaReceiver, request: CastQueueRequest): Promise<CastMediaStatus> {
+  private sendQueueModeUpdate(player: DefaultMediaReceiver, request: CastQueueRequest, currentStatus: CastMediaStatus): Promise<CastMediaStatus> {
+    const desiredRepeatMode = castRepeatMode(request.repeatMode);
+    const currentRepeatMode = currentStatus.repeatMode ?? currentStatus.queueData?.repeatMode;
+    const repeatChanged = currentRepeatMode !== desiredRepeatMode;
+    const shuffleChanged = this.state.customReceiver === true && currentStatus.queueData?.shuffle !== request.shuffle;
+    if (!repeatChanged && !shuffleChanged) return Promise.resolve(currentStatus);
+
     return withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
       if (this.state.customReceiver) {
         // castv2-client predates CAF's shuffle field, so send the protocol
         // request directly. customData lets our receiver distinguish the
         // desktop's already-ordered queue from a Google Home shuffle request.
-        player.media.sessionRequest({
+        const update: Record<string, unknown> = {
           type: "QUEUE_UPDATE",
-          repeatMode: castRepeatMode(request.repeatMode),
-          shuffle: request.shuffle,
           customData: { flacCastSender: true }
-        }, (error, result) => {
+        };
+        if (repeatChanged) update.repeatMode = desiredRepeatMode;
+        if (shuffleChanged) update.shuffle = request.shuffle;
+        player.media.sessionRequest(update, (error, result) => {
           if (error) reject(error);
           else resolve((result ?? {}) as CastMediaStatus);
         });
         return;
       }
-      player.queueUpdate([], { repeatMode: castRepeatMode(request.repeatMode) }, (error, result) => {
+      player.queueUpdate([], { repeatMode: desiredRepeatMode }, (error, result) => {
         if (error) reject(error);
         else resolve((result ?? {}) as CastMediaStatus);
       });
@@ -893,7 +900,7 @@ export class CastController {
       this.lastLoadedContent = { contentId: currentContentId, contentType: currentContentType };
       this.state = { ...this.state, queueActive: true };
       if (this.state.customReceiver && this.state.shuffle !== request.shuffle) {
-        const modeStatus = await this.sendQueueModeUpdate(player, request);
+        const modeStatus = await this.sendQueueModeUpdate(player, request, status);
         if (this.player !== player) return false;
         this.applyStatus(modeStatus);
         this.state = { ...this.state, queueActive: true };
