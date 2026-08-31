@@ -4,6 +4,12 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-08-30
+
+### Fixed
+
+- Retried macOS DMG creation after a transient `hdiutil: Resource busy` failure, removing partial output before each bounded retry.
+
 ## [1.0.8] - 2026-08-30
 
 ### Added
@@ -162,7 +168,8 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
-[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/vicemora97/flac-cast/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/vicemora97/flac-cast/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/vicemora97/flac-cast/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/vicemora97/flac-cast/compare/v1.0.5...v1.0.6

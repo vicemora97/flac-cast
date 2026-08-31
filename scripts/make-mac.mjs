@@ -23,17 +23,34 @@ await mkdir(outputDirectory, { recursive: true });
 await run("cp", ["-R", appBundle, stagingDirectory]);
 await symlink("/Applications", join(stagingDirectory, "Applications"));
 
-await run("hdiutil", [
-  "create",
-  "-volname",
-  "Flac Cast",
-  "-srcfolder",
-  stagingDirectory,
-  "-ov",
-  "-format",
-  "UDZO",
-  dmgPath
-]);
+await createDmgWithRetry();
 
 const checksumPath = await writeSha256(dmgPath);
 console.log(`Instalador generado en:\n${dmgPath}\nSHA-256 generado en:\n${checksumPath}`);
+
+async function createDmgWithRetry() {
+  const maximumAttempts = 3;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      await run("hdiutil", [
+        "create",
+        "-volname",
+        "Flac Cast",
+        "-srcfolder",
+        stagingDirectory,
+        "-ov",
+        "-format",
+        "UDZO",
+        dmgPath
+      ]);
+      return;
+    } catch (error) {
+      const stderr = String(error?.stderr ?? "");
+      const resourceBusy = /resource busy/i.test(stderr);
+      if (!resourceBusy || attempt === maximumAttempts) throw error;
+      console.warn(`hdiutil reported a busy temporary resource (attempt ${attempt}/${maximumAttempts}); retrying.`);
+      await rm(dmgPath, { force: true });
+      await new Promise((resolve) => setTimeout(resolve, attempt * 2_000));
+    }
+  }
+}
