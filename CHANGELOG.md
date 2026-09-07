@@ -4,6 +4,20 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Invalidated evicted prepared-track entries and verified cached files before reuse; protected active, upcoming, and in-flight cache files during serialized cleanup.
+- Opened HTTP media files before sending successful response headers, avoiding false partial-content responses for missing cache files.
+- Reconciled failed Cast queue mutations against receiver status, with longer acknowledgement deadlines and bounded retries that wait for outstanding commands before recalculating the queue.
+- Discarded obsolete queue updates after playback/session changes and preserved the receiver's current item during automatic transitions.
+- Served valid multi-range HTTP requests as full responses instead of rejecting them solely for containing multiple ranges, and cleaned up audio file streams when clients disconnect.
+
+### Added
+
+- Added on-demand FLAC metadata sanitization with unchanged encoded audio and byte-range support, avoiding a full cold-start NAS copy for supported containers.
+- Added local HTTP transfer completion/interruption diagnostics and regression tests for delayed queue acknowledgements, stale updates, automatic transitions, and byte-range transfers.
+- Added startup stage timings, explicit FLAC cache outcomes, and correlated Cast dispatch/HTTP identifiers to diagnose slow cold starts without changing playback behavior.
+
 ## [1.0.9] - 2026-08-30
 
 ### Fixed

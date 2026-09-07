@@ -1,4 +1,6 @@
 import Bonjour = require("bonjour-service");
+import { randomUUID } from "node:crypto";
+import { diagnosticMediaId } from "./cast-diagnostics.js";
 import { Client, DefaultMediaReceiver, type CastMediaStatus } from "castv2-client";
 import type { CastDeliveryMode, CastDevice, CastQueueRequest, CastState, CastTrack } from "../shared/contracts.js";
 
@@ -32,6 +34,9 @@ export class CastController {
   private recoveryInProgress = false;
   private queueAllowed = true;
   private queueMutation = Promise.resolve();
+  private queueGeneration = 0;
+  private activeQueueGeneration = 0;
+  private pendingQueueCommand?: { player: DefaultMediaReceiver; settled: Promise<void> };
   private readonly receiverProfiles = new Map<string, Map<string, PreferredCastDelivery>>();
   private lastStatusDiagnosticSignature = "";
 
@@ -202,6 +207,7 @@ export class CastController {
   }
 
   async castTrack(track: CastTrack, startTimeSeconds = 0, allowSessionRecovery = true): Promise<CastState> {
+    this.queueGeneration += 1;
     if (!this.player || !this.state.connected) throw new Error("Primero selecciona un dispositivo Chromecast");
     if (!track.castUrl) throw new Error("No hay una dirección de red local disponible para esta pista");
     const requestedStartTime = Number.isFinite(startTimeSeconds) ? startTimeSeconds : 0;
@@ -307,6 +313,7 @@ export class CastController {
   }
 
   async castQueue(request: CastQueueRequest): Promise<CastState> {
+    this.queueGeneration += 1;
     const tracks = request.tracks.slice(0, 40);
     if (tracks.length === 0) throw new Error("The Cast queue is empty");
     const currentIndex = Math.max(0, Math.min(tracks.length - 1, request.currentIndex));
@@ -381,15 +388,71 @@ export class CastController {
   }
 
   updateQueue(request: CastQueueRequest): Promise<CastState> {
-    const operation = this.queueMutation.then(() => this.updateQueueNow(request));
+    return this.enqueueQueueMutation(request, () => this.updateQueueNow(request));
+  }
+
+  updateQueueModes(request: CastQueueRequest): Promise<CastState> {
+    return this.enqueueQueueMutation(request, () => this.updateQueueModesNow(request));
+  }
+
+  private enqueueQueueMutation(request: CastQueueRequest, mutate: () => Promise<CastState>): Promise<CastState> {
+    const player = this.player;
+    const generation = this.queueGeneration;
+    const operation = this.queueMutation.then(async () => {
+      if (!player || player !== this.player || generation !== this.queueGeneration) return this.getState();
+      this.activeQueueGeneration = generation;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        // A local timeout does not cancel a Cast command. Do not send another
+        // mutation until the outstanding command has actually acknowledged.
+        const pending = this.pendingQueueCommand;
+        if (pending?.player === player) {
+          await withTimeout(pending.settled, 10_000, "The previous Cast queue command is still unconfirmed");
+        }
+        this.assertQueueSession(player);
+        const status = await this.readQueueStatus(player);
+        this.applyStatus(status);
+        const requestedTrackId = request.tracks[request.currentIndex]?.id;
+        const actualTrackId = status.media?.customData?.trackId
+          ?? status.items?.find((item) => item.itemId === status.currentItemId)?.media?.customData?.trackId;
+        if (!actualTrackId || requestedTrackId !== actualTrackId) {
+          this.reportDiagnostic("queue-update-obsolete", { requestedTrackId, actualTrackId });
+          return this.getState();
+        }
+        try {
+          return await mutate();
+        } catch (error) {
+          this.assertQueueSession(player);
+          this.reportDiagnostic("queue-reconcile", { attempt, message: error instanceof Error ? error.message : String(error) });
+          // Read-only reconciliation is safe even if the receiver has not
+          // acknowledged yet. A retry recomputes the diff from fresh item IDs.
+          const refreshed = await this.readQueueStatus(player);
+          this.applyStatus(refreshed);
+          if (attempt === 1) throw error;
+        }
+      }
+      return this.getState();
+    });
     this.queueMutation = operation.then(() => undefined, () => undefined);
     return operation;
   }
 
-  updateQueueModes(request: CastQueueRequest): Promise<CastState> {
-    const operation = this.queueMutation.then(() => this.updateQueueModesNow(request));
-    this.queueMutation = operation.then(() => undefined, () => undefined);
-    return operation;
+  private assertQueueSession(player: DefaultMediaReceiver): void {
+    if (this.player !== player || this.activeQueueGeneration !== this.queueGeneration || !this.state.connected) {
+      throw new Error("The Cast session or playback request changed during queue synchronization");
+    }
+  }
+
+  private async runQueueCommand<T>(player: DefaultMediaReceiver, send: () => Promise<T>, message: string): Promise<T> {
+    this.assertQueueSession(player);
+    const command = send();
+    const pending = { player, settled: command.then(() => undefined, () => undefined) };
+    this.pendingQueueCommand = pending;
+    void pending.settled.then(() => {
+      if (this.pendingQueueCommand === pending) this.pendingQueueCommand = undefined;
+    });
+    const result = await withTimeout(command, 10_000, message);
+    this.assertQueueSession(player);
+    return result;
   }
 
   private async updateQueueModesNow(request: CastQueueRequest): Promise<CastState> {
@@ -397,13 +460,9 @@ export class CastController {
     if (!player || !this.state.connected) throw new Error("No hay una sesión Chromecast activa");
     if (!this.state.queueActive) return this.getState();
 
-    const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
-      player.getStatus((error, result) => {
-        if (error) reject(error);
-        else resolve((result ?? {}) as CastMediaStatus);
-      });
-    }), 3_000, "Chromecast no respondió al consultar la cola");
+    const status = await this.readQueueStatus(player);
     if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaban los controles de cola");
+    if (!this.queueRequestMatches(status, request)) return this.getState();
 
     const currentItemId = status.currentItemId;
     const items = status.items ?? [];
@@ -424,16 +483,18 @@ export class CastController {
       });
       const changed = future.some((item, index) => item.itemId !== reordered[index]?.itemId);
       if (changed && reordered.length > 1) {
-        await withTimeout(new Promise<void>((resolve, reject) => {
+        await this.runQueueCommand(player, () => new Promise<void>((resolve, reject) => {
           player.queueReorder(reordered.map((item) => item.itemId), {}, (error) => error ? reject(error) : resolve());
-        }), 3_000, "Chromecast no respondió al reordenar la cola");
+        }), "Chromecast no respondió al reordenar la cola");
         if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se reordenaba la cola");
       }
     }
 
     // Repeat mode is a queue property and can be changed without replacing the
     // current media item.
-    const updated = await this.sendQueueModeUpdate(player, request, status);
+    const latest = await this.readQueueStatus(player);
+    if (!this.queueRequestMatches(latest, request)) return this.getState();
+    const updated = await this.sendQueueModeUpdate(player, request, latest);
     if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la repetición");
     this.applyStatus(updated);
     this.state = { ...this.state, queueActive: true };
@@ -447,6 +508,7 @@ export class CastController {
 
     let status = await this.readQueueStatus(player);
     if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
+    if (!this.queueRequestMatches(status, request)) return this.getState();
 
     const currentIndex = Math.max(0, Math.min(request.tracks.length - 1, request.currentIndex));
     const desiredFuture = request.tracks.slice(currentIndex + 1, 40).filter((track) => Boolean(track.castUrl));
@@ -501,9 +563,9 @@ export class CastController {
         preloadTime: suggestedPreloadTime(track, runStart + offset)
       }));
       const insertBefore = retainedItemByDesiredIndex.get(index);
-      await withTimeout(new Promise<void>((resolve, reject) => {
+      await this.runQueueCommand(player, () => new Promise<void>((resolve, reject) => {
         player.queueInsert(futureItems, { insertBefore }, (error) => error ? reject(error) : resolve());
-      }), 3_000, "Chromecast no respondió al insertar la nueva cola");
+      }), "Chromecast no respondió al insertar la nueva cola");
       if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
       status = await this.readQueueStatus(player);
       if (status.currentItemId !== currentItemId) {
@@ -536,9 +598,9 @@ export class CastController {
     ];
     if (obsoleteItemIds.length > 0) {
       this.reportDiagnostic("queue-remove", { currentItemId, obsoleteItemIds });
-      await withTimeout(new Promise<void>((resolve, reject) => {
+      await this.runQueueCommand(player, () => new Promise<void>((resolve, reject) => {
         player.queueRemove(obsoleteItemIds, {}, (error) => error ? reject(error) : resolve());
-      }), 3_000, "Chromecast no respondió al actualizar la cola");
+      }), "Chromecast no respondió al actualizar la cola");
       if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se actualizaba la cola");
       status = await this.readQueueStatus(player);
       if (status.currentItemId !== currentItemId) {
@@ -567,14 +629,15 @@ export class CastController {
       && reorderedItemIds.some((itemId, index) => currentFutureIds[index] !== itemId);
     if (orderChanged) {
       this.reportDiagnostic("queue-reorder", { currentItemId, reorderedItemIds });
-      await withTimeout(new Promise<void>((resolve, reject) => {
+      await this.runQueueCommand(player, () => new Promise<void>((resolve, reject) => {
         player.queueReorder(reorderedItemIds, {}, (error) => error ? reject(error) : resolve());
-      }), 3_000, "Chromecast no respondió al reordenar la cola");
+      }), "Chromecast no respondió al reordenar la cola");
       if (this.player !== player) throw new Error("La sesión Chromecast cambió mientras se reordenaba la cola");
       status = await this.readQueueStatus(player);
     }
 
     const desiredRepeatMode = castRepeatMode(request.repeatMode);
+    if (!this.queueRequestMatches(status, request)) return this.getState();
     const shuffleChanged = this.state.customReceiver === true && reportedCastShuffle(status) !== request.shuffle;
     if (reportedCastRepeatMode(status) !== desiredRepeatMode || shuffleChanged) {
       status = await this.sendQueueModeUpdate(player, request, status);
@@ -586,12 +649,23 @@ export class CastController {
   }
 
   private async readQueueStatus(player: DefaultMediaReceiver): Promise<CastMediaStatus> {
-    return withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+    this.assertQueueSession(player);
+    const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
       player.getStatus((error, result) => {
         if (error) reject(error);
         else resolve((result ?? {}) as CastMediaStatus);
       });
-    }), 3_000, "Chromecast no respondió al consultar la cola");
+    }), 8_000, "Chromecast no respondió al consultar la cola");
+    this.assertQueueSession(player);
+    return status;
+  }
+
+  private queueRequestMatches(status: CastMediaStatus, request: CastQueueRequest): boolean {
+    const trackId = status.media?.customData?.trackId
+      ?? status.items?.find((item) => item.itemId === status.currentItemId)?.media?.customData?.trackId;
+    if (trackId && trackId === request.tracks[request.currentIndex]?.id) return true;
+    this.applyStatus(status);
+    return false;
   }
 
   private sendQueueModeUpdate(player: DefaultMediaReceiver, request: CastQueueRequest, currentStatus: CastMediaStatus): Promise<CastMediaStatus> {
@@ -601,7 +675,7 @@ export class CastController {
     const shuffleChanged = this.state.customReceiver === true && reportedCastShuffle(currentStatus) !== request.shuffle;
     if (!repeatChanged && !shuffleChanged) return Promise.resolve(currentStatus);
 
-    return withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+    return this.runQueueCommand(player, () => new Promise<CastMediaStatus>((resolve, reject) => {
       if (this.state.customReceiver) {
         // castv2-client predates CAF's shuffle field, so send the protocol
         // request directly. customData lets our receiver distinguish the
@@ -622,7 +696,7 @@ export class CastController {
         if (error) reject(error);
         else resolve((result ?? {}) as CastMediaStatus);
       });
-    }), 3_000, "Chromecast no respondió al actualizar los modos de cola");
+    }), "Chromecast no respondió al actualizar los modos de cola");
   }
 
   async command(command: "play" | "pause"): Promise<CastState> {
@@ -664,6 +738,7 @@ export class CastController {
   }
 
   async disconnect(stopReceiver = true): Promise<CastState> {
+    this.queueGeneration += 1;
     const client = this.client;
     const player = this.player;
     this.client = undefined;
@@ -878,6 +953,11 @@ export class CastController {
     });
     if (startIndex < 0 || items.length === 0) return false;
 
+    const loadId = randomUUID();
+    const loadStarted = performance.now();
+    const loadDiagnostic = { loadId, command: "QUEUE_LOAD", trackId: tracks[currentIndex]?.id,
+      mediaId: diagnosticMediaId(currentContentId), deliveryMode, itemCount: items.length };
+
     this.state = {
       ...this.state,
       playerState: "BUFFERING",
@@ -890,11 +970,17 @@ export class CastController {
     };
     try {
       const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+        this.reportDiagnostic("cast-load-sent", loadDiagnostic);
         player.queueLoad(items, {
           startIndex,
           currentTime: startTime,
           repeatMode: castRepeatMode(request.repeatMode)
-        }, (error, result) => error ? reject(error) : resolve(result ?? {}));
+        }, (error, result) => {
+          this.reportDiagnostic("cast-load-ack", { ...loadDiagnostic, elapsedMilliseconds: Math.round(performance.now() - loadStarted),
+            outcome: error ? "error" : "acknowledged", playerState: result?.playerState });
+          if (error) reject(error);
+          else resolve(result ?? {});
+        });
       }), 8_000, "Chromecast did not accept the playback queue");
       if (this.player !== player) return false;
       this.applyStatus(status);
@@ -912,6 +998,7 @@ export class CastController {
       }
       return true;
     } catch (error) {
+      this.reportDiagnostic("cast-load-failed", { ...loadDiagnostic, elapsedMilliseconds: Math.round(performance.now() - loadStarted) });
       if (this.player === player) console.warn(`[cast] queueLoad failed (${currentContentType})`, error);
       return false;
     }
@@ -929,6 +1016,10 @@ export class CastController {
   ): Promise<boolean> {
     const player = this.player;
     if (!player) return false;
+    const loadId = randomUUID();
+    const loadStarted = performance.now();
+    const loadDiagnostic = { loadId, command: "LOAD", trackId: this.state.currentTrackId,
+      mediaId: diagnosticMediaId(contentId), deliveryMode, contentType };
     this.state = {
       ...this.state,
       playerState: "BUFFERING",
@@ -941,7 +1032,10 @@ export class CastController {
     };
     try {
       const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+        this.reportDiagnostic("cast-load-sent", loadDiagnostic);
         player.load({ contentId, contentType, streamType: "BUFFERED", duration, metadata }, { autoplay: true, currentTime: startTime }, (error, result) => {
+          this.reportDiagnostic("cast-load-ack", { ...loadDiagnostic, elapsedMilliseconds: Math.round(performance.now() - loadStarted),
+            outcome: error ? "error" : "acknowledged", playerState: (result as CastMediaStatus | undefined)?.playerState });
           if (error) reject(error);
           else resolve((result ?? {}) as CastMediaStatus);
         });
@@ -961,6 +1055,7 @@ export class CastController {
       if (stable && this.player === player) this.lastLoadedContent = { contentId, contentType };
       return stable && this.player === player;
     } catch (error) {
+      this.reportDiagnostic("cast-load-failed", { ...loadDiagnostic, elapsedMilliseconds: Math.round(performance.now() - loadStarted) });
       if (this.player === player) console.warn(`[cast] load failed (${contentType})`, error);
       return false;
     }

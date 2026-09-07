@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
+import { timeCastStage, type CastTiming } from "./cast-diagnostics.js";
 
 const execFileAsync = promisify(execFile);
 const ffmpegExecutablePath = ffmpegPath?.includes("app.asar")
@@ -20,6 +21,7 @@ export type PreparedFlac = {
   filePath: string;
   repacked: boolean;
   metadataBytes: number;
+  cacheStatus: "hit" | "created" | "joined";
 };
 
 type FlacInspection = {
@@ -34,6 +36,27 @@ export class LosslessTranscoder {
   private readonly wavInProgress = new Map<string, Promise<string>>();
   private readonly cacheReservations = new Map<string, number>();
   private activeFilePath?: string;
+  private readonly heldFiles = new Map<string, number>();
+  private upcomingFiles = new Set<string>();
+  private pruning = Promise.resolve();
+
+  constructor(private readonly onEvicted: (filePath: string) => void = () => undefined) {}
+
+  holdFile(filePath: string): () => void {
+    this.heldFiles.set(filePath, (this.heldFiles.get(filePath) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const count = (this.heldFiles.get(filePath) ?? 1) - 1;
+      if (count > 0) this.heldFiles.set(filePath, count);
+      else this.heldFiles.delete(filePath);
+    };
+  }
+
+  setUpcomingFiles(paths: string[]): void {
+    this.upcomingFiles = new Set(paths.slice(0, 5));
+  }
 
   isAvailable(): boolean {
     return Boolean(ffmpegExecutablePath && existsSync(ffmpegExecutablePath));
@@ -45,32 +68,35 @@ export class LosslessTranscoder {
     if (filePath) void touch(filePath);
   }
 
-  async inspectPreparedFlac(sourcePath: string): Promise<{ repacked: boolean; prepared?: PreparedFlac }> {
-    const sourceStat = await stat(sourcePath);
-    const inspection = await inspectFlac(sourcePath, sourceStat.size);
+  async inspectPreparedFlac(sourcePath: string, timing?: CastTiming): Promise<{ repacked: boolean; prepared?: PreparedFlac }> {
+    const sourceStat = await timeCastStage(timing, "source-stat", () => stat(sourcePath));
+    const inspection = await timeCastStage(timing, "flac-header-inspection", () => inspectFlac(sourcePath, sourceStat.size));
     const repacked = inspection.metadataBytes > MAX_CAST_METADATA_BYTES
       || inspection.paddingBytes > MAX_PADDING_BYTES;
+    timing?.report("cast-flac-inspection", { trackId: timing.trackId, preparationId: timing.preparationId,
+      sourceBytes: sourceStat.size, metadataBytes: inspection.metadataBytes, paddingBytes: inspection.paddingBytes,
+      repackRequired: repacked });
     const key = createHash("sha256")
       .update(`flac-cache-v2\0${sourcePath}\0${sourceStat.size}\0${sourceStat.mtimeMs}\0${repacked}`)
       .digest("hex");
     const outputPath = join(this.cacheFolder, `flac-${key}.flac`);
     try {
-      const outputStat = await stat(outputPath);
+      const outputStat = await timeCastStage(timing, "prepared-cache-stat", () => stat(outputPath));
       if (outputStat.size > 42) {
         await touch(outputPath);
         await this.pruneCache(outputPath);
         return {
           repacked,
-          prepared: { filePath: outputPath, repacked, metadataBytes: inspection.metadataBytes }
+          prepared: { filePath: outputPath, repacked, metadataBytes: inspection.metadataBytes, cacheStatus: "hit" }
         };
       }
     } catch { /* No hay una copia preparada disponible. */ }
     return { repacked };
   }
 
-  async prepareFlac(sourcePath: string): Promise<PreparedFlac> {
-    const sourceStat = await stat(sourcePath);
-    const inspection = await inspectFlac(sourcePath, sourceStat.size);
+  async prepareFlac(sourcePath: string, timing?: CastTiming): Promise<PreparedFlac> {
+    const sourceStat = await timeCastStage(timing, "preparation-source-stat", () => stat(sourcePath));
+    const inspection = await timeCastStage(timing, "preparation-header-inspection", () => inspectFlac(sourcePath, sourceStat.size));
     const repacked = inspection.metadataBytes > MAX_CAST_METADATA_BYTES
       || inspection.paddingBytes > MAX_PADDING_BYTES;
     const key = createHash("sha256")
@@ -79,20 +105,20 @@ export class LosslessTranscoder {
     const outputPath = join(this.cacheFolder, `flac-${key}.flac`);
 
     try {
-      const outputStat = await stat(outputPath);
+      const outputStat = await timeCastStage(timing, "preparation-cache-stat", () => stat(outputPath));
       if (outputStat.size > 42) {
         await touch(outputPath);
         await this.pruneCache(outputPath);
-        return { filePath: outputPath, repacked, metadataBytes: inspection.metadataBytes };
+        return { filePath: outputPath, repacked, metadataBytes: inspection.metadataBytes, cacheStatus: "hit" };
       }
       await unlink(outputPath);
     } catch { /* Todavía no está en caché. */ }
 
     const existing = this.flacInProgress.get(outputPath);
-    if (existing) return existing;
+    if (existing) return timeCastStage(timing, "wait-existing-preparation", async () => ({ ...await existing, cacheStatus: "joined" as const }));
 
     this.cacheReservations.set(outputPath, sourceStat.size);
-    const preparation = this.createPreparedFlac(sourcePath, outputPath, inspection, repacked)
+    const preparation = timeCastStage(timing, repacked ? "flac-repack" : "flac-copy", () => this.createPreparedFlac(sourcePath, outputPath, inspection, repacked))
       .finally(() => {
         this.flacInProgress.delete(outputPath);
         this.cacheReservations.delete(outputPath);
@@ -184,7 +210,7 @@ export class LosslessTranscoder {
       }
       await rename(temporaryPath, outputPath);
       await this.pruneCache(outputPath);
-      return { filePath: outputPath, repacked, metadataBytes: inspection.metadataBytes };
+      return { filePath: outputPath, repacked, metadataBytes: inspection.metadataBytes, cacheStatus: "created" };
     } catch (error) {
       await unlink(temporaryPath).catch(() => undefined);
       throw new Error(`No se pudo preparar ${basename(sourcePath)} para Cast: ${error instanceof Error ? error.message : String(error)}`);
@@ -247,10 +273,24 @@ export class LosslessTranscoder {
     }
   }
 
-  private async pruneCache(currentPath: string): Promise<void> {
+  private pruneCache(currentPath: string): Promise<void> {
+    const operation = this.pruning.then(() => this.pruneCacheNow(currentPath));
+    this.pruning = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private isProtected(filePath: string, currentPath: string): boolean {
+    return filePath === currentPath || filePath === this.activeFilePath || this.heldFiles.has(filePath)
+      || this.upcomingFiles.has(filePath) || this.flacInProgress.has(filePath)
+      || this.compatibleFlacInProgress.has(filePath) || this.wavInProgress.has(filePath)
+      || this.cacheReservations.has(filePath);
+  }
+
+  private async pruneCacheNow(currentPath: string): Promise<void> {
     try {
       const entries = (await readdir(this.cacheFolder, { withFileTypes: true }))
-        .filter((entry) => entry.isFile() && (entry.name.endsWith(".wav") || entry.name.endsWith(".flac")));
+        .filter((entry) => entry.isFile() && !/\.tmp\.(?:wav|flac)$/.test(entry.name)
+          && (entry.name.endsWith(".wav") || entry.name.endsWith(".flac")));
       const cached = await Promise.all(entries.map(async (entry) => {
         const path = join(this.cacheFolder, entry.name);
         const details = await stat(path);
@@ -264,7 +304,8 @@ export class LosslessTranscoder {
         ...this.flacInProgress.keys(),
         ...this.compatibleFlacInProgress.keys(),
         ...this.wavInProgress.keys(),
-        ...this.cacheReservations.keys()
+        ...this.cacheReservations.keys(),
+        ...this.heldFiles.keys(), ...this.upcomingFiles
       ]);
       const protectedItems = cached.filter((item) => protectedPaths.has(item.path));
       const cachedPaths = new Set(cached.map((item) => item.path));
@@ -284,9 +325,14 @@ export class LosslessTranscoder {
         }
       }
 
-      await Promise.all(cached
-        .filter((item) => !keep.has(item.path))
-        .map((item) => unlink(item.path).catch(() => undefined)));
+      for (const item of cached) {
+        // Protection may have changed while filesystem metadata was awaited.
+        if (keep.has(item.path) || this.isProtected(item.path, currentPath)) continue;
+        try {
+          await unlink(item.path);
+          this.onEvicted(item.path);
+        } catch { /* A concurrent reader or external removal is harmless. */ }
+      }
     } catch {
       // La limpieza es oportunista y nunca debe impedir la reproducción.
     }
