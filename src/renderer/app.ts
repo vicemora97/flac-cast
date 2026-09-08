@@ -1,6 +1,7 @@
 import type { CastDevice, CastState, CastTrack, LibraryResult, Playlist, SyncedLyrics, Track } from "../shared/contracts.js";
 import { getLanguage, normalizeLanguage, setLanguage, t, type AppLanguage } from "./i18n.js";
 import type { SearchTrackRecord, SearchWorkerRequest, SearchWorkerResponse } from "./search-types.js";
+import { PlayerColors } from "./player-colors.js";
 
 type Album = {
   key: string;
@@ -199,6 +200,11 @@ let toolbarScrollFrame: number | undefined;
 let toolbarRevealLockUntil = 0;
 const viewScrollPositions: Partial<Record<LibraryView, number>> = {};
 const artworkAccentCache = new Map<string, Promise<string>>();
+const playerColors = new PlayerColors(() => ({
+  url: selectedTrack?.localUrl, artwork: selectedTrack?.artworkUrl,
+  playing: currentCastState.connected ? currentCastState.playerState === "PLAYING" : !player.paused,
+  time: currentCastState.connected ? Number(remoteProgress.value) : player.currentTime
+}));
 const libraryTrackById = new Map<string, Track>();
 let currentLibraryLocation: LibraryLocation = { kind: "view", view: "tracks" };
 const libraryBackHistory: LibraryHistoryEntry[] = [];
@@ -2355,6 +2361,7 @@ function shouldPrepareLocalFallback(error: unknown): boolean {
 }
 
 function renderRemoteTransport(): void {
+  playerColors.sync();
   const duration = currentCastState.duration ?? selectedTrack?.durationSeconds ?? 0;
   const currentTime = Math.min(duration || Number.POSITIVE_INFINITY, currentCastState.currentTime ?? 0);
   const playable = currentCastState.playerState === "PLAYING" || currentCastState.playerState === "PAUSED";
@@ -2374,6 +2381,7 @@ function renderRemoteTransport(): void {
 }
 
 function renderLocalTransport(): void {
+  playerColors.sync();
   const duration = Number.isFinite(player.duration) ? player.duration : (selectedTrack?.durationSeconds ?? 0);
   const currentTime = Math.min(duration || Number.POSITIVE_INFINITY, player.currentTime || 0);
   localToggle.disabled = !selectedTrack;
@@ -3237,6 +3245,7 @@ function replaceArtwork(container: HTMLElement, url?: string): void {
 }
 
 async function applyPlayerAccent(artworkUrl?: string): Promise<void> {
+  playerColors.sync();
   const fallback = "rgb(199 243 107)";
   if (!artworkUrl) {
     document.documentElement.style.setProperty("--player-accent", fallback);
@@ -3244,6 +3253,7 @@ async function applyPlayerAccent(artworkUrl?: string): Promise<void> {
   }
   const pending = artworkAccentCache.get(artworkUrl) ?? extractArtworkAccent(artworkUrl);
   artworkAccentCache.set(artworkUrl, pending);
+  while (artworkAccentCache.size > 32) artworkAccentCache.delete(artworkAccentCache.keys().next().value!);
   const accent = await pending.catch(() => fallback);
   if (selectedTrack?.artworkUrl === artworkUrl) document.documentElement.style.setProperty("--player-accent", accent);
 }

@@ -135,6 +135,14 @@ Local diagnostics separate the existing renderer `play-track` event from prepara
 
 For comparison, select a track, wait for audible playback, select another track, then select the first again. Check the cache outcome on both attempts rather than assuming the first was cold or the second was cached: prewarming and eviction can affect either attempt. No cache purge or NAS configuration is required.
 
+## Optional player colors and music reaction
+
+The header's Player colors dialog offers neutral controls, a static artwork color (default), or a repeating transition between three dominant artwork colors. Intensity and full-cycle duration (6–60 seconds) are saved locally. Artwork is sampled at 32×32 pixels; palettes are bounded to 32 cached covers. Visual updates are capped at 20 per second and scoped to the transport controls and quality badge. Animation stops while paused or hidden and respects the system reduced-motion preference.
+
+Music reaction is a separate opt-in setting, off by default. It measures actual audio energy, not the output volume setting. After playback settles for 2.5 seconds, a single lower-priority FFmpeg process analyzes a prepared disk copy when available, otherwise the original source. This is an extra read and decode pass, including extra NAS traffic when no prepared copy exists. Disable music reaction on resource-constrained PCs or busy networks; color cycling does not need audio analysis.
+
+Only a 10 Hz RMS envelope is retained (up to two hours per track and eight cached envelopes, approximately 2.3 MB of typed-array payload at the maximum duration). Decoding uses one codec/filter thread, a 120-second deadline, and small streamed PCM chunks. No audio is sent to an external service or inserted into the playback path. Analysis cancels when the track changes, the feature is disabled, or the window is hidden/minimized. Until analysis is ready, colors cycle without music reaction. Seeks follow the same envelope by playback timestamp. Unavailable/long analyses fall back to non-reactive colors; they never block playback. Settings do not change delivered bit depth, sample rate, or Cast formats.
+
 ## Troubleshooting Cast quality
 
 A published Cast codec table describes platform capabilities, not a guarantee for every third-party receiver implementation. Receiver firmware, Web Receiver support, accepted MIME aliases, FLAC metadata layout, channel configuration, and the downstream audio path can all affect playback.

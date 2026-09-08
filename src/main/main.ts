@@ -15,6 +15,7 @@ import {
 import { CastDiagnostics, diagnosticMediaId, timeCastStage, type CastTiming } from "./cast-diagnostics.js";
 import { LosslessTranscoder } from "./lossless-transcoder.js";
 import { LyricsService } from "./lyrics.js";
+import { AudioEnvelopeService } from "./audio-envelope.js";
 import { PreferencesStore } from "./preferences.js";
 import type { CastDeliveryMode, CastQueueRequest, CastTrack, LibraryResult, PlaybackCommand, TaskbarPlaybackState } from "../shared/contracts.js";
 
@@ -36,6 +37,20 @@ const transcoder = new LosslessTranscoder((filePath) => {
 const mediaServer = new MediaServer((event, data) => castDiagnostics.record("main", event, data),
   (path) => transcoder.holdFile(path));
 const lyricsService = new LyricsService(app.getPath("userData"), app.getVersion());
+const audioEnvelopeService = new AudioEnvelopeService();
+app.on("before-quit", () => audioEnvelopeService.cancel());
+app.on("browser-window-created", (_event, window) => {
+  const visibility = (visible: boolean) => {
+    if (!visible) audioEnvelopeService.cancel();
+    if (!window.webContents.isDestroyed()) window.webContents.send("player:visual-visibility", visible);
+  };
+  window.on("minimize", () => visibility(false));
+  window.on("hide", () => visibility(false));
+  window.on("restore", () => visibility(true));
+  window.on("show", () => visibility(true));
+  window.webContents.on("did-finish-load", () => visibility(window.isVisible() && !window.isMinimized()));
+  window.on("closed", () => audioEnvelopeService.cancel());
+});
 let preferences: PreferencesStore;
 let libraryManager: LibraryManager;
 let libraryWatcher: LibraryWatcher;
@@ -410,6 +425,20 @@ ipcMain.handle("ui:set-scale", (event, scale: number) => {
   const safeScale = Math.max(0.8, Math.min(1.5, Number.isFinite(scale) ? scale : 1));
   event.sender.setZoomFactor(safeScale);
   return safeScale;
+});
+
+ipcMain.handle("audio:cancel-analysis", () => audioEnvelopeService.cancel());
+ipcMain.handle("audio:analyze", async (event, localUrl: string) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window?.isVisible() || window.isMinimized()) return;
+  const source = resolveLibraryTrack(localUrl);
+  if (!source) return;
+  // Prefer a prepared disk copy; otherwise this opt-in feature reads the source.
+  const prepared = [...preparedCastTracks.values()].find((entry) => entry.sourcePath === source.filePath && existsSync(entry.filePath));
+  const path = prepared?.filePath ?? source.filePath;
+  const release = transcoder.holdFile(path);
+  try { return await audioEnvelopeService.analyze(path); }
+  finally { release(); }
 });
 
 ipcMain.handle("cast:devices", () => castController.listDevices());

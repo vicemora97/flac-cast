@@ -14,6 +14,8 @@ All notable changes to Flac Cast are documented in this file.
 
 ### Added
 
+- Added persistent player color settings: neutral, static artwork, and smooth three-color cycling with adjustable intensity and cycle duration.
+- Added opt-in RMS-based music reaction for local and Cast playback, with bounded background analysis, reduced-motion support, and cancellation while hidden or disabled.
 - Added on-demand FLAC metadata sanitization with unchanged encoded audio and byte-range support, avoiding a full cold-start NAS copy for supported containers.
 - Added local HTTP transfer completion/interruption diagnostics and regression tests for delayed queue acknowledgements, stale updates, automatic transitions, and byte-range transfers.
 - Added startup stage timings, explicit FLAC cache outcomes, and correlated Cast dispatch/HTTP identifiers to diagnose slow cold starts without changing playback behavior.
