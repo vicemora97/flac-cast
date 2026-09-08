@@ -4,6 +4,32 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-09-08
+
+### Fixed
+
+- Prevented volume commands from dereferencing a closed Cast receiver controller, and ignored acknowledgements belonging to a replaced session.
+- Exposed the exact Custom Receiver launch failure when playback falls back to Google's Default Media Receiver.
+- Invalidated evicted prepared-track entries and verified cached files before reuse; protected active, upcoming, and in-flight cache files during serialized cleanup.
+- Opened HTTP media files before sending successful response headers, avoiding false partial-content responses for missing cache files.
+- Reconciled failed Cast queue mutations against receiver status, with longer acknowledgement deadlines and bounded retries that wait for outstanding commands before recalculating the queue.
+- Discarded obsolete queue updates after playback/session changes and preserved the receiver's current item during automatic transitions.
+- Served valid multi-range HTTP requests as full responses instead of rejecting them solely for containing multiple ranges, and cleaned up audio file streams when clients disconnect.
+
+### Added
+
+- Added persistent player color settings: neutral, static artwork, and smooth three-color cycling with adjustable intensity and cycle duration.
+- Added opt-in RMS-based music reaction for local and Cast playback, with bounded background analysis, reduced-motion support, and cancellation while hidden or disabled.
+- Added on-demand FLAC metadata sanitization with unchanged encoded audio and byte-range support, avoiding a full cold-start NAS copy for supported containers.
+- Added local HTTP transfer completion/interruption diagnostics and regression tests for delayed queue acknowledgements, stale updates, automatic transitions, and byte-range transfers.
+- Added startup stage timings, explicit FLAC cache outcomes, and correlated Cast dispatch/HTTP identifiers to diagnose slow cold starts without changing playback behavior.
+
+## [1.0.9] - 2026-08-30
+
+### Fixed
+
+- Retried macOS DMG creation after a transient `hdiutil: Resource busy` failure, removing partial output before each bounded retry.
+
 ## [1.0.8] - 2026-08-30
 
 ### Added
@@ -162,7 +188,8 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
-[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/vicemora97/flac-cast/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/vicemora97/flac-cast/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/vicemora97/flac-cast/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/vicemora97/flac-cast/compare/v1.0.5...v1.0.6

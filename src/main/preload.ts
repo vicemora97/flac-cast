@@ -2,6 +2,13 @@ import { contextBridge, ipcRenderer } from "electron";
 import type { HiresApi } from "../shared/contracts.js";
 
 const api: HiresApi = {
+  analyzeAudio: (localUrl) => ipcRenderer.invoke("audio:analyze", localUrl),
+  cancelAudioAnalysis: () => ipcRenderer.invoke("audio:cancel-analysis"),
+  onPlayerVisualVisibility: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, visible: boolean) => listener(visible);
+    ipcRenderer.on("player:visual-visibility", handler);
+    return () => ipcRenderer.removeListener("player:visual-visibility", handler);
+  },
   getAppVersion: () => ipcRenderer.invoke("app:version"),
   openRepository: () => ipcRenderer.invoke("app:open-repository"),
   openProjectPage: (page) => ipcRenderer.invoke("app:open-project-page", page),

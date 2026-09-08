@@ -1,9 +1,11 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { open, stat, type FileHandle } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { networkInterfaces } from "node:os";
 import { extname } from "node:path";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { pipeline, Readable } from "node:stream";
+import { inspectFlacView, readFlacRange, type FlacView } from "./flac-stream.js";
 import type { MediaAccess } from "../shared/contracts.js";
 
 type MediaEntry = {
@@ -11,6 +13,8 @@ type MediaEntry = {
   immutable: boolean;
   size?: number;
   mtimeMs?: number;
+  sanitizeFlac?: boolean;
+  flacView?: FlacView;
 };
 
 const MIME_TYPES: Record<string, string> = {
@@ -36,6 +40,9 @@ export class MediaServer {
   private server?: Server;
   private port?: number;
   private lastMediaAccess?: MediaAccess;
+
+  constructor(private readonly reportDiagnostic: (event: string, data: Record<string, unknown>) => void = () => undefined,
+    private readonly holdFile: (path: string) => () => void = () => () => undefined) {}
 
   async start(): Promise<void> {
     if (this.server) return;
@@ -76,12 +83,15 @@ export class MediaServer {
         entry,
         response,
         request.socket.remoteAddress,
-        request.method
+        request.method,
+        mediaMatch[2]
       );
     });
 
     this.server.keepAliveTimeout = 30_000;
     this.server.headersTimeout = 35_000;
+    // Explicitly preserve Node's default: no inactivity deadline mid-response.
+    this.server.timeout = 0;
 
     await new Promise<void>((resolve, reject) => {
       this.server!.once("error", reject);
@@ -93,13 +103,14 @@ export class MediaServer {
     this.port = address.port;
   }
 
-  register(filePath: string, receiverAddress?: string, options?: { immutable?: boolean }): { id: string; localUrl: string; castUrl?: string } {
+  register(filePath: string, receiverAddress?: string, options?: { immutable?: boolean; sanitizeFlac?: boolean }): { id: string; localUrl: string; castUrl?: string } {
     if (!this.port) throw new Error("El servidor de audio no está iniciado");
-    let id = this.fileIds.get(filePath);
+    const key = options?.sanitizeFlac ? `${filePath}\0streamed-flac-v1` : filePath;
+    let id = this.fileIds.get(key);
     if (!id) {
       id = randomUUID();
-      this.fileIds.set(filePath, id);
-      this.files.set(id, { filePath, immutable: options?.immutable === true });
+      this.fileIds.set(key, id);
+      this.files.set(id, { filePath, immutable: options?.immutable === true, sanitizeFlac: options?.sanitizeFlac });
     } else if (options?.immutable) {
       const entry = this.files.get(id);
       if (entry) entry.immutable = true;
@@ -112,6 +123,17 @@ export class MediaServer {
       localUrl: `http://127.0.0.1:${this.port}${route}`,
       castUrl: lanAddress ? `http://${lanAddress}:${this.port}${route}` : undefined
     };
+  }
+
+  async registerFlacStream(filePath: string, receiverAddress?: string) {
+    const file = await open(filePath, "r");
+    try {
+      const info = await file.stat();
+      const view = await inspectFlacView(file, info.size, info.mtimeMs);
+      const endpoint = this.register(filePath, receiverAddress, { sanitizeFlac: true });
+      this.files.get(endpoint.id)!.flacView = view;
+      return endpoint;
+    } finally { await file.close(); }
   }
 
   routeForReceiver(sourceUrl: string | undefined, receiverAddress: string | undefined): string | undefined {
@@ -189,31 +211,96 @@ export class MediaServer {
     entry: MediaEntry,
     response: import("node:http").ServerResponse,
     clientAddress?: string,
-    method?: string
+    method?: string,
+    mediaId?: string
   ): Promise<void> {
     const startedAt = Date.now();
+    const requestId = randomUUID();
+    let source: Readable | undefined;
+    let file: FileHandle | undefined;
+    let sourceBytesRead = 0;
+    const release = this.holdFile(entry.filePath);
+    let released = false;
+    const cleanup = async () => {
+      if (released) return;
+      released = true;
+      try { await file?.close(); } catch { /* The stream may already be closed. */ } finally { release(); }
+    };
+    let transferReported = false;
+    let streamErrorCode: string | undefined;
+    const reportTransfer = (outcome: string) => {
+      if (transferReported) return;
+      transferReported = true;
+      this.reportDiagnostic("media-transfer", {
+        requestId, mediaId, outcome, method, status: response.statusCode,
+        range: range?.slice(0, 256),
+        expectedBytes: response.getHeader("Content-Length"),
+        // Read from disk, not proof of bytes received or played by the device.
+        sourceBytesRead,
+        elapsedMilliseconds: Date.now() - startedAt,
+        errorCode: streamErrorCode,
+        clientAddress: clientAddress?.replace(/^::ffff:/, "")
+      });
+    };
+    response.once("finish", () => reportTransfer("response-finished"));
+    response.once("close", () => reportTransfer(response.writableFinished ? "response-finished" : "interrupted"));
+    response.once("close", () => {
+      if (!source) void cleanup();
+    });
+    response.once("error", (error: NodeJS.ErrnoException) => {
+      streamErrorCode ??= error.code ?? "RESPONSE_ERROR";
+      reportTransfer("error");
+    });
+    this.reportDiagnostic("media-request", { requestId, mediaId, method, range: range?.slice(0, 256),
+      clientAddress: clientAddress?.replace(/^::ffff:/, "") });
+    const stream = (options?: { start: number; end: number }) => {
+      if (response.destroyed) return;
+      if (size === 0) { response.end(); return; }
+      const start = options?.start ?? 0;
+      const end = options?.end ?? size - 1;
+      source = entry.flacView && entry.sanitizeFlac
+        ? Readable.from(readFlacRange(file!, entry.flacView, start, end), { objectMode: false })
+        : file!.createReadStream({ start, end, autoClose: false });
+      source.on("data", (chunk: Buffer) => { sourceBytesRead += chunk.length; });
+      source.once("error", (error: NodeJS.ErrnoException) => {
+        streamErrorCode = error.code ?? "READ_ERROR";
+        reportTransfer("error");
+      });
+      // Also destroys the file stream if the receiver closes early.
+      pipeline(source, response, () => { void cleanup(); });
+    };
     let size: number;
     let mtimeMs: number;
     try {
-      if (entry.immutable && entry.size != null && entry.mtimeMs != null) {
-        size = entry.size;
-        mtimeMs = entry.mtimeMs;
-      } else {
-        const fileStat = await stat(entry.filePath);
-        size = fileStat.size;
-        mtimeMs = fileStat.mtimeMs;
-        if (entry.immutable) {
-          entry.size = size;
-          entry.mtimeMs = mtimeMs;
+      // Open before writing headers. Cached size alone cannot prove a file
+      // still exists, and an open handle keeps an in-flight response stable.
+      file = await open(entry.filePath, "r");
+      if (released || response.destroyed) { await file.close(); release(); return; }
+      const fileStat = await file.stat();
+      size = fileStat.size;
+      mtimeMs = fileStat.mtimeMs;
+      if (entry.sanitizeFlac) {
+        if (!entry.flacView || entry.flacView.sourceSize !== size || entry.flacView.mtimeMs !== mtimeMs) {
+          try {
+            entry.flacView = await inspectFlacView(file, size, mtimeMs);
+          } catch {
+            // A future queue item may not have been inspected yet. Preserve
+            // the original representation if its metadata cannot be streamed.
+            entry.flacView = undefined;
+          }
         }
+        size = entry.flacView?.size ?? size;
       }
-    } catch {
+    } catch (error) {
+      streamErrorCode = (error as NodeJS.ErrnoException).code ?? "OPEN_OR_METADATA_ERROR";
+      await cleanup();
       this.recordAccess(clientAddress, method, range, 404, undefined, entry.immutable, Date.now() - startedAt);
       response.writeHead(404).end();
       return;
     }
     const contentType = MIME_TYPES[extname(entry.filePath).toLowerCase()];
-    const etag = `"${size.toString(16)}-${Math.round(mtimeMs).toString(16)}"`;
+    if (response.destroyed) return;
+    const etag = `"${entry.sanitizeFlac ? "streamed-flac-v1-" : ""}${size.toString(16)}-${Math.round(mtimeMs).toString(16)}"`;
     response.setHeader("Accept-Ranges", "bytes");
     response.setHeader("Cache-Control", entry.immutable ? "private, max-age=3600, immutable" : "private, no-cache");
     response.setHeader("Content-Encoding", "identity");
@@ -226,11 +313,16 @@ export class MediaServer {
       return;
     }
 
-    if (!range) {
+    // Multiple valid byte ranges may be ignored and served as a complete 200
+    // response (RFC 9110). Do not mislabel a single fragment as multipart 206.
+    const multipleRanges = range?.trim().match(/^bytes=(.+)$/)?.[1].split(",");
+    const ignoreMultipleRanges = multipleRanges && multipleRanges.length > 1
+      && multipleRanges.every((part) => /^(?:\d+-\d*|-\d+)$/.test(part.trim()));
+    if (!range || ignoreMultipleRanges) {
       this.recordAccess(clientAddress, method, range, 200, size, entry.immutable, Date.now() - startedAt);
       response.writeHead(200, { "Content-Length": size });
       if (headOnly) response.end();
-      else createReadStream(entry.filePath).on("error", () => response.destroy()).pipe(response);
+      else stream();
       return;
     }
 
@@ -257,7 +349,7 @@ export class MediaServer {
       start = Number(match[1]);
       end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
     }
-    if (start > end || start >= size) {
+    if ((!match[1] && !match[2]) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) {
       this.recordAccess(clientAddress, method, range, 416, undefined, entry.immutable, Date.now() - startedAt);
       response.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
       return;
@@ -271,7 +363,7 @@ export class MediaServer {
       "Content-Encoding": "identity"
     });
     if (headOnly) response.end();
-    else createReadStream(entry.filePath, { start, end }).on("error", () => response.destroy()).pipe(response);
+    else stream({ start, end });
   }
 
   private recordAccess(

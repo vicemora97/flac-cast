@@ -18,6 +18,8 @@ Packaged releases launch the published Flac Cast receiver (`C56EBBCB`) from `htt
 
 Set `FLAC_CAST_RECEIVER_APP_ID` before starting the app to override this automatic selection for an explicit test. If the selected Custom Web Receiver cannot launch, Flac Cast falls back to Google's Default Media Receiver so basic playback remains available; remote branding and queue behavior can then be more limited.
 
+The Cast panel reports the launch error when this fallback is active. Seeing **Default Media Receiver** on Google Home means the registered Flac Cast receiver did not launch; track metadata cannot rename Google's fallback. An unpublished production application launches only on devices registered for testing. Public installations require the production application to show **Published** in the Google Cast SDK Developer Console and to have audio-only device support enabled. If a published receiver still falls back on one model, collect that PC's local diagnostics—the `receiver-launch-fallback` event distinguishes device rejection, timeout, and session-identity problems.
+
 Each load request uses Cast's music-track metadata type and sends title, track artist, album, album artist, track number, disc number, duration, and album artwork when available. Older cached library records may not contain a distinct album-artist tag, so Flac Cast safely uses the track artist as the album artist until that file is rescanned. The fields shown by Google Home, a soundbar application, or a device display remain receiver-dependent.
 
 Receiver changes are developed and validated under `docs/receiver-dev/`. After validation, the development receiver file is promoted deliberately to `docs/receiver/`; production releases must never point at the unpublished development application ID.
@@ -42,7 +44,9 @@ Other supported containers are first sent with their registered MIME type. If th
 
 ### Prepared FLAC
 
-A clean current FLAC with no prepared entry is served directly from its source, so playback does not wait for a complete NAS-to-cache copy. Upcoming files are copied by the background prewarmer. FLAC files with unusually large metadata, embedded images, or padding are prepared before playback and can be repacked with FFmpeg using audio stream copy. This changes the container layout but does not re-encode FLAC audio.
+A clean current FLAC with no prepared entry is served directly from its source. For files containing embedded pictures or padding, the HTTP server can construct a small metadata prefix and stream the original encoded audio frames immediately, without waiting for a complete NAS-to-cache copy or FFmpeg repack. It preserves STREAMINFO, seek tables, comments, and other retained metadata; byte ranges are translated into the source file. Audio samples, bit depth, and sample rate are unchanged. This follows the [FLAC container layout](https://www.rfc-editor.org/rfc/rfc9639.html).
+
+The virtual prefix is bounded to 128 KiB. Current-track preflight failures fall back to the existing full preparation path. Upcoming source routes attempt the same sanitization on demand, falling back to the original representation if necessary. Background prewarming still prepares disk copies for the next five tracks. No software or configuration change is required on the NAS; audio still travels through the PC.
 
 ### Compatible fallbacks
 
@@ -95,7 +99,9 @@ Every reconstructed session receives a new local generation. Queue synchronizati
 
 ## Cache policy
 
-Prepared FLAC and WAV files are stored under the operating-system temporary directory. The cache keeps at most eight files and approximately 1 GiB, while protecting the active file and in-progress conversions. Older unprotected files are deleted opportunistically.
+Prepared FLAC and WAV files are stored under the operating-system temporary directory. Cleanup targets eight files and approximately 1 GiB, protecting the current preparation, active track, next five prepared tracks, in-progress conversions, and files being served over HTTP. Protected work can temporarily exceed those targets; complete tracks are not retained in JavaScript RAM. Older unprotected files are deleted opportunistically.
+
+Cleanup runs serially, skips temporary conversion outputs, and invalidates in-memory prepared entries when it removes files. Manual selections verify cached files before reuse. The HTTP server opens files before sending successful audio headers and holds them during transfers. Receiver queue entries outside the protected look-ahead window use source URLs rather than disposable cache URLs.
 
 Electron and V8 handle JavaScript garbage collection, but audio conversion files are explicit disk resources and are governed by this cache policy.
 
@@ -103,11 +109,41 @@ Electron and V8 handle JavaScript garbage collection, but audio conversion files
 
 The media server supports full responses, `HEAD`, suffix and normal byte ranges, CORS, identity content encoding, validators, keep-alive, and correct `206`/`304`/`416` responses. Prepared files are immutable and may be reused by the receiver; original library files are revalidated. File metadata reads are asynchronous so a slow NAS response does not block Electron's main event loop.
 
-The Cast panel can display the most recent receiver HTTP status and transferred byte count while buffering. Internal diagnostics also record whether the response was cacheable and the time needed to produce its headers.
+The Cast panel can display the most recent receiver HTTP status and expected response byte count while buffering. This is not confirmation that the receiver downloaded or played those bytes. Internal diagnostics also record whether the response was cacheable and the time needed to produce its headers.
+
+Valid requests containing multiple byte ranges fall back to a full `200` response; the server does not implement multipart responses. Single ranges retain `206` support. The server explicitly disables the socket inactivity timeout during responses, which is also the default in modern Node.js. Its keep-alive timeout applies between completed responses.
+
+Local `cast-diagnostics.log` entries correlate `media-request` and `media-transfer` events with a request ID. Terminal outcomes distinguish `response-finished`, `interrupted`, and `error`, with HTTP status, expected length, bytes read from disk, elapsed time, and error codes. Response completion means Node finished writing to the underlying system, not proof of receiver playback. Logs exclude file paths and tokenized media URLs and use the existing bounded diagnostic file. Disconnected clients cause their file streams to be destroyed.
+
+## Queue acknowledgement and reconciliation
+
+Queue mutations are serialized and allow 10 seconds for acknowledgement; status reads allow 8 seconds. A timeout does not cancel the receiver command. After a mutation fails, the controller reads receiver status and permits one recalculated attempt. An outstanding mutation must acknowledge before another is sent; each wait is bounded to 10 seconds. If acknowledgement never arrives, queue edits fail rather than blindly replaying insertions. Playback is not explicitly stopped or reloaded by this recovery path.
+
+Retries use fresh item IDs and track multiplicities to avoid duplicate inserts after a partially successful operation. Each queued request captures the playback generation, and fresh status must still identify the requested current track. New loads, disconnections, or receiver-side track transitions prevent obsolete work from continuing. The `IDLE`/`FINISHED` handling remains in place to prevent double advancement.
+
+Run `npm run test:cast-stability` for simulated receiver delays/failures and real local HTTP transfer tests. These tests do not connect to a physical Cast device; hardware testing is still necessary for firmware-specific behavior.
 
 ## Local playback handoff
 
 When a receiver is selected while a local track is active, the renderer captures the local playback position at the moment local playback pauses. That position is sent as the initial `currentTime` in the Cast media load request and is preserved across the direct-FLAC and WAV fallback attempts. New tracks and automatic queue advances continue to start at zero.
+
+## Measuring startup latency
+
+Local diagnostics separate the existing renderer `play-track` event from preparation, command dispatch, HTTP requests, and receiver `PLAYING` status. `cast-stage-start`/`cast-stage-end` events use a preparation ID and track ID. Nested stages measure source stat, FLAC header inspection, cache lookup, file copy/repacking, and waits for existing preparation. Durations are nested and must not be added together. Missing-cache `ENOENT` events are expected cache misses, not playback failures.
+
+`cast-source-selected` reports `original-source`, `streamed-source`, `prewarm-map-hit`, `hit`, `created`, or `joined`. A prewarm-map hit verifies the prepared file on disk before reuse; a stale entry is discarded. `streamed-source` means a sanitized metadata prefix followed by unchanged source audio, without a full preparation copy. `cast-flac-inspection` records file and metadata sizes and whether sanitization is required. Fallback preparation is timed separately. For virtual FLAC transfers, the byte-read counter includes generated prefix bytes as well as source audio bytes.
+
+`cast-load-sent` is recorded immediately before `LOAD`/`QUEUE_LOAD`; `cast-load-ack` records the callback delay with a unique load ID, including late callbacks. A media ID correlates the file with HTTP request/transfer events without logging its tokenized URL or filesystem path. Repeated loads can reuse a media ID, so correlate by dispatch time and track as well. The reported `PLAYING` state is not an acoustic measurement.
+
+For comparison, select a track, wait for audible playback, select another track, then select the first again. Check the cache outcome on both attempts rather than assuming the first was cold or the second was cached: prewarming and eviction can affect either attempt. No cache purge or NAS configuration is required.
+
+## Optional player colors and music reaction
+
+The header's Player colors dialog offers neutral controls, a static artwork color (default), or a repeating transition between three dominant artwork colors. Intensity and full-cycle duration (6–60 seconds) are saved locally. Artwork is sampled at 32×32 pixels; palettes are bounded to 32 cached covers. Visual updates are capped at 20 per second and scoped to the transport controls and quality badge. Animation stops while paused or hidden and respects the system reduced-motion preference.
+
+Music reaction is a separate opt-in setting, off by default. It measures actual audio energy, not the output volume setting. After playback settles for 2.5 seconds, a single lower-priority FFmpeg process analyzes a prepared disk copy when available, otherwise the original source. This is an extra read and decode pass, including extra NAS traffic when no prepared copy exists. Disable music reaction on resource-constrained PCs or busy networks; color cycling does not need audio analysis.
+
+Only a 10 Hz RMS envelope is retained (up to two hours per track and eight cached envelopes, approximately 2.3 MB of typed-array payload at the maximum duration). Decoding uses one codec/filter thread, a 120-second deadline, and small streamed PCM chunks. No audio is sent to an external service or inserted into the playback path. Analysis cancels when the track changes, the feature is disabled, or the window is hidden/minimized. Until analysis is ready, colors cycle without music reaction. Seeks follow the same envelope by playback timestamp. Unavailable/long analyses fall back to non-reactive colors; they never block playback. Settings do not change delivered bit depth, sample rate, or Cast formats.
 
 ## Troubleshooting Cast quality
 

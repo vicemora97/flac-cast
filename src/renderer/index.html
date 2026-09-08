@@ -42,6 +42,7 @@
         <h1>Flac Cast</h1>
       </div>
       <div class="header-actions">
+        <button id="player-colors" type="button" class="color-settings-button" data-i18n="playerColors" aria-haspopup="dialog">Player colors</button>
         <label class="language-control display-control" data-i18n-title="displayMode" title="Display mode">
           <svg class="control-icon" aria-hidden="true"><use href="#icon-display" /></svg>
           <span data-i18n="displayMode">Display</span>
@@ -257,6 +258,15 @@
         <button id="cast-button" class="cast" data-i18n-title="playOnChromecast" title="Play on Chromecast"><svg class="control-icon" aria-hidden="true"><use href="#icon-cast" /></svg><span id="cast-button-label">Cast</span></button>
       </div>
     </footer>
+    <dialog id="color-dialog" class="color-dialog" aria-labelledby="color-title">
+      <div class="color-dialog-heading"><h2 id="color-title" data-i18n="playerColors">Player colors</h2><button id="color-close" type="button" data-i18n="close">Close</button></div>
+      <label><span data-i18n="colorMode">Color mode</span><select id="color-mode"><option value="off" data-i18n="colorOff">No album color</option><option value="static" data-i18n="colorStatic">Static album color</option><option value="animated" data-i18n="colorAnimated">Flowing album colors</option></select></label>
+      <label><span><span data-i18n="colorIntensity">Effect intensity</span> <output id="color-intensity-value" for="color-intensity"></output></span><input id="color-intensity" type="range" min="0" max="100" step="1"></label>
+      <label><span><span data-i18n="colorSpeed">Full color cycle (lower is faster)</span> <output id="color-speed-value" for="color-speed"></output></span><input id="color-speed" type="range" min="6" max="60" step="1"></label>
+      <label class="color-reactive"><input id="color-reactive" type="checkbox"><span data-i18n="colorReactive">React to the music's intensity</span></label>
+      <p data-i18n="colorCost">Music reaction analyzes the file locally in the background. This adds CPU and disk/network reads, including on NAS. Leave it off on low-resource PCs. Playback audio is never modified.</p>
+      <p id="color-status" role="status"></p>
+    </dialog>
     <script src="app.js"></script>
   </body>
 </html>

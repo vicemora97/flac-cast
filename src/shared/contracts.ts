@@ -45,6 +45,7 @@ export type CastState = {
   repeatMode?: "off" | "all" | "single";
   shuffle?: boolean;
   customReceiver?: boolean;
+  receiverFallbackReason?: string;
   queueItems?: Array<{
     trackId: string;
     current?: boolean;
@@ -130,7 +131,12 @@ export type LibraryResult = {
   changed?: boolean;
 };
 
+export type AudioEnvelope = { step: number; levels: Float32Array };
+
 export type HiresApi = {
+  analyzeAudio(localUrl: string): Promise<AudioEnvelope | undefined>;
+  cancelAudioAnalysis(): Promise<void>;
+  onPlayerVisualVisibility(listener: (visible: boolean) => void): () => void;
   getAppVersion(): Promise<string>;
   openRepository(): Promise<boolean>;
   openProjectPage(page: "license" | "privacy" | "code-signing"): Promise<boolean>;
