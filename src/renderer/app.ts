@@ -2294,7 +2294,7 @@ function renderCastState(): void {
     : currentCastState.playerState === "PAUSED" ? t("castPaused")
       : currentCastState.playerState === "BUFFERING" ? t("castBuffering") : t("castConnected");
   castStatus.textContent = t("castStateOnDevice", { state: stateLabel, device: currentCastState.deviceName ?? t("googleCastDevice") });
-  if (currentCastState.queueActive === false && currentCastState.playerState === "PLAYING") {
+  if (currentCastState.queueActive === false && currentCastState.playerState === "PLAYING" && currentCastState.customReceiver !== false) {
     castStatus.textContent = t("castQueueUnavailable", { device: currentCastState.deviceName ?? t("googleCastDevice") });
   }
   if (currentCastState.deliveryPhase === "failed") {
@@ -2304,6 +2304,12 @@ function renderCastState(): void {
   }
   castToggle.textContent = currentCastState.playerState === "PAUSED" ? t("resume") : t("pause");
   if (currentCastState.error) castStatus.textContent = formatErrorMessage(currentCastState.error);
+  else if (currentCastState.customReceiver === false) {
+    castStatus.textContent = t("castDefaultReceiver", {
+      device: currentCastState.deviceName ?? t("googleCastDevice"),
+      reason: currentCastState.receiverFallbackReason || t("unknownError")
+    });
+  }
   updateTaskbarControls();
   scheduleCastPrewarm();
 }

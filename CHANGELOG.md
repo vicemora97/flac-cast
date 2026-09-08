@@ -4,8 +4,12 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-09-08
+
 ### Fixed
 
+- Prevented volume commands from dereferencing a closed Cast receiver controller, and ignored acknowledgements belonging to a replaced session.
+- Exposed the exact Custom Receiver launch failure when playback falls back to Google's Default Media Receiver.
 - Invalidated evicted prepared-track entries and verified cached files before reuse; protected active, upcoming, and in-flight cache files during serialized cleanup.
 - Opened HTTP media files before sending successful response headers, avoiding false partial-content responses for missing cache files.
 - Reconciled failed Cast queue mutations against receiver status, with longer acknowledgement deadlines and bounded retries that wait for outstanding commands before recalculating the queue.

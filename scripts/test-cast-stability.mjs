@@ -151,6 +151,31 @@ test("FINISHED remains valid for IDLE, but is not inherited by a playing new tra
   assert.equal(controller.getState().idleReason, undefined);
 });
 
+test("volume changes never call a client whose receiver controller has already closed", async () => {
+  const controller = Object.create(CastController.prototype);
+  let called = 0;
+  const events = [];
+  const client = { receiver: null, close() {}, setVolume() { called += 1; } };
+  Object.assign(controller, { client, player: {}, state: { connected: true, deviceId: "speaker", playerState: "PLAYING" },
+    queueAllowed: true, reportDiagnostic: (event) => events.push(event) });
+  await assert.rejects(controller.setVolume(.5), /intentará reconectarse/);
+  assert.equal(called, 0);
+  assert.equal(controller.getState().connected, false);
+  assert.match(controller.getState().error, /volumen/);
+});
+
+test("a stale volume callback cannot overwrite a replacement Cast session", async () => {
+  const controller = Object.create(CastController.prototype);
+  let callback;
+  const client = { receiver: {}, setVolume(_value, done) { callback = done; } };
+  Object.assign(controller, { client, player: {}, state: { connected: true, volumeLevel: .2 }, reportDiagnostic() {} });
+  const operation = controller.setVolume(.8);
+  controller.client = { receiver: {} };
+  callback(null, { level: .8 });
+  await assert.rejects(operation, /sesión Cast cambió/);
+  assert.equal(controller.getState().volumeLevel, .2);
+});
+
 test("HTTP supports ranges, full-response multi-range fallback and interrupted-transfer diagnostics", async () => {
   const folder = await mkdtemp(join(tmpdir(), "flac-cast-http-test-"));
   const file = join(folder, "sample.flac");

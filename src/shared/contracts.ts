@@ -45,6 +45,7 @@ export type CastState = {
   repeatMode?: "off" | "all" | "single";
   shuffle?: boolean;
   customReceiver?: boolean;
+  receiverFallbackReason?: string;
   queueItems?: Array<{
     trackId: string;
     current?: boolean;

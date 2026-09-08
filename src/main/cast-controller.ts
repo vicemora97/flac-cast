@@ -19,6 +19,7 @@ type CompatibleFlacFallback = (track: CastTrack, targetBits: 16 | 24, targetSamp
 type PreparedFlac = { url: string; repacked: boolean; cached: boolean };
 type FlacPreparer = (track: CastTrack) => Promise<PreparedFlac>;
 type ReceiverStatus = { volume?: { level?: number; muted?: boolean } };
+type ClientWithReceiverController = Client & { receiver?: unknown };
 export type PreferredCastDelivery = "original" | "compatible" | "wav";
 
 export class CastController {
@@ -140,11 +141,15 @@ export class CastController {
           appId: this.receiverAppId,
           error: customReceiverError instanceof Error ? customReceiverError.message : String(customReceiverError)
         });
+        const receiverFallbackReason = customReceiverError instanceof Error
+          ? customReceiverError.message : String(customReceiverError);
         player = await this.launchReceiver(client, DefaultMediaReceiver, "Default Media Receiver");
+        this.state = { ...this.state, receiverFallbackReason };
       }
 
       this.player = player;
-      this.state = { connected: true, deviceId, deviceName: device.name, deviceModel: device.model, playerState: "IDLE", customReceiver };
+      this.state = { connected: true, deviceId, deviceName: device.name, deviceModel: device.model, playerState: "IDLE", customReceiver,
+        receiverFallbackReason: customReceiver ? undefined : this.state.receiverFallbackReason };
       this.stateUpdatedAt = Date.now();
       player.on("status", (status: CastMediaStatus) => {
         if (this.player === player) this.applyStatus(status);
@@ -725,14 +730,40 @@ export class CastController {
   }
 
   async setVolume(level: number): Promise<CastState> {
-    if (!this.client || !this.state.connected) throw new Error("No hay una sesión Chromecast activa");
+    const client = this.client;
+    if (!client || !this.state.connected) throw new Error("No hay una sesión Chromecast activa");
+    // castv2-client clears its internal receiver controller as soon as the
+    // transport closes, before its public error/close event necessarily runs.
+    // Calling PlatformSender#setVolume during that gap throws synchronously.
+    if (!(client as ClientWithReceiverController).receiver) {
+      if (this.client === client) this.invalidateSession("La conexión de control Cast se cerró antes de cambiar el volumen.");
+      throw new Error("La conexión Cast se cerró. Flac Cast intentará reconectarse.");
+    }
     const safeLevel = Math.max(0, Math.min(1, level));
-    const volume = await new Promise<{ level?: number; muted?: boolean }>((resolve, reject) => {
-      this.client!.setVolume({ level: safeLevel }, (error, result) => {
-        if (error) reject(error);
-        else resolve(result ?? { level: safeLevel });
+    let volume: { level?: number; muted?: boolean };
+    try {
+      volume = await withTimeout(new Promise<{ level?: number; muted?: boolean }>((resolve, reject) => {
+        client.setVolume({ level: safeLevel }, (error, result) => {
+          if (error) reject(error);
+          else resolve(result ?? { level: safeLevel });
+        });
+      }), 3_000, "Chromecast no confirmó el cambio de volumen");
+    } catch (error) {
+      const receiverAvailable = Boolean((client as ClientWithReceiverController).receiver);
+      this.reportDiagnostic("volume-command-failed", {
+        receiverAvailable,
+        sessionCurrent: this.client === client,
+        error: error instanceof Error ? error.message : String(error)
       });
-    });
+      if (!receiverAvailable && this.client === client) {
+        this.invalidateSession("La conexión de control Cast se cerró durante el cambio de volumen.");
+        throw new Error("La conexión Cast se cerró. Flac Cast intentará reconectarse.");
+      }
+      throw error;
+    }
+    if (this.client !== client || !this.state.connected) {
+      throw new Error("La sesión Cast cambió durante el ajuste de volumen.");
+    }
     this.state = { ...this.state, volumeLevel: volume.level ?? safeLevel, muted: volume.muted };
     return this.getState();
   }
@@ -852,6 +883,10 @@ export class CastController {
   private async refreshVolume(): Promise<void> {
     const client = this.client;
     if (!client || !this.state.connected) return;
+    if (!(client as ClientWithReceiverController).receiver) {
+      if (this.client === client) this.invalidateSession("La conexión de control Cast se cerró antes de consultar el volumen.");
+      return;
+    }
     try {
       const volume = await withTimeout(new Promise<{ level?: number; muted?: boolean }>((resolve, reject) => {
         client.getVolume((error, result) => {
