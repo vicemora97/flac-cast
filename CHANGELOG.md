@@ -4,6 +4,10 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Grouped album views by album artist instead of individual track artist, preventing featured performers from splitting one release into multiple cards.
+
 ## [1.0.10] - 2026-09-08
 
 ### Fixed

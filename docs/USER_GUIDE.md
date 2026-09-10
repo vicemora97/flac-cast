@@ -40,7 +40,7 @@ Recently-added sorting records when Flac Cast first discovers a new path during 
 
 ### Albums
 
-The Albums tab shows an artwork grid. Opening an album displays its metadata and numbered track list. Selecting a track creates a scheduled queue from that album.
+The Albums tab shows an artwork grid. Tracks are grouped by album title and album artist, so guest and featured performers do not split one release into multiple cards. When an album-artist tag is unavailable, the track artist remains the safe fallback. Opening an album displays its metadata and numbered track list. Selecting a track creates a scheduled queue from that album.
 
 ### Artists
 

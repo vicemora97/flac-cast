@@ -1,15 +1,8 @@
 import type { CastDevice, CastState, CastTrack, LibraryResult, Playlist, SyncedLyrics, Track } from "../shared/contracts.js";
+import { buildAlbumGroups, type Album } from "./album-grouping.js";
 import { getLanguage, normalizeLanguage, setLanguage, t, type AppLanguage } from "./i18n.js";
 import type { SearchTrackRecord, SearchWorkerRequest, SearchWorkerResponse } from "./search-types.js";
 import { PlayerColors } from "./player-colors.js";
-
-type Album = {
-  key: string;
-  title: string;
-  artist: string;
-  artworkUrl?: string;
-  tracks: Track[];
-};
 
 type Artist = {
   name: string;
@@ -2625,21 +2618,7 @@ function showCastError(error: unknown): void {
 }
 
 function groupAlbums(tracks: Track[]): Album[] {
-  const albums = new Map<string, Album>();
-  for (const track of tracks) {
-    const key = `${track.artist}\u0000${track.album}`;
-    const album = albums.get(key) ?? {
-      key,
-      title: displayAlbum(track.album),
-      artist: displayArtist(track.artist),
-      artworkUrl: track.artworkUrl,
-      tracks: []
-    };
-    album.artworkUrl ??= track.artworkUrl;
-    album.tracks.push(track);
-    albums.set(key, album);
-  }
-  return [...albums.values()].sort((a, b) => a.artist.localeCompare(b.artist) || a.title.localeCompare(b.title));
+  return buildAlbumGroups(tracks, displayAlbum, displayArtist);
 }
 
 function groupArtists(tracks: Track[]): Artist[] {
