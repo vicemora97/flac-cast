@@ -30,7 +30,7 @@ export function buildAlbumGroups(
     albums.set(key, album);
   }
   return [...albums.values()].sort((left, right) =>
-    left.artist.localeCompare(right.artist) || left.title.localeCompare(right.title));
+    left.title.localeCompare(right.title) || left.artist.localeCompare(right.artist));
 }
 
 function normalizeAlbumIdentity(value: string): string {

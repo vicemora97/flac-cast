@@ -48,3 +48,16 @@ test("harmless casing and surrounding whitespace do not split an album", () => {
   ]);
   assert.equal(groups.length, 1);
 });
+
+test("album cards are ordered by album title with artist only as a tie-breaker", () => {
+  const groups = buildAlbumGroups([
+    track("zebra", "A Artist", "A Artist", "Zebra"),
+    track("alpha-b", "B Artist", "B Artist", "Alpha"),
+    track("alpha-a", "A Artist", "A Artist", "Alpha")
+  ]);
+  assert.deepEqual(groups.map(({ title, artist }) => `${title}:${artist}`), [
+    "Alpha:A Artist",
+    "Alpha:B Artist",
+    "Zebra:A Artist"
+  ]);
+});

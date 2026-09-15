@@ -4,6 +4,12 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-09-15
+
+### Changed
+
+- Ordered the Albums grid alphabetically by album title, using album artist only to break ties.
+
 ### Fixed
 
 - Grouped album views by album artist instead of individual track artist, preventing featured performers from splitting one release into multiple cards.
