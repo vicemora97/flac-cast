@@ -176,6 +176,65 @@ test("a stale volume callback cannot overwrite a replacement Cast session", asyn
   assert.equal(controller.getState().volumeLevel, .2);
 });
 
+test("a stale playback command cannot overwrite a replacement Cast session", async () => {
+  const controller = Object.create(CastController.prototype);
+  const events = [];
+  let callback;
+  const player = { pause(done) { callback = done; } };
+  Object.assign(controller, {
+    player,
+    state: { connected: true, currentTrackId: "a", currentTime: 20, playerState: "PLAYING" },
+    reportDiagnostic: (event, data) => events.push({ event, ...data }),
+    lastStatusDiagnosticSignature: ""
+  });
+  const operation = controller.command("pause", "test-control");
+  controller.player = { pause() {} };
+  callback(null, { playerState: "PAUSED", currentTime: 20 });
+  await assert.rejects(operation, /sesión Cast cambió/);
+  assert.equal(controller.getState().playerState, "PLAYING");
+  assert.ok(events.some((entry) => entry.event === "cast-command-request" && entry.origin === "test-control"));
+  assert.ok(events.some((entry) => entry.event === "cast-command-failed"));
+  assert.ok(!events.some((entry) => entry.event === "cast-command-ack"));
+});
+
+test("seek keeps the requested position when the receiver acknowledgement omits it", async () => {
+  const controller = Object.create(CastController.prototype);
+  const events = [];
+  const player = { seek(target, done) { done(null, { playerState: "PLAYING" }); } };
+  Object.assign(controller, {
+    player,
+    state: { connected: true, currentTrackId: "a", currentTime: 20, duration: 120, playerState: "PLAYING" },
+    stateUpdatedAt: Date.now(),
+    reportDiagnostic: (event, data) => events.push({ event, ...data }),
+    lastStatusDiagnosticSignature: ""
+  });
+  const state = await controller.seek(100);
+  assert.ok(state.currentTime >= 100 && state.currentTime < 100.1);
+  assert.ok(events.some((entry) => entry.event === "cast-seek-request" && entry.target === 100));
+  assert.ok(events.some((entry) => entry.event === "cast-seek-ack" && entry.currentTime === 100));
+});
+
+test("a stale seek callback cannot overwrite a replacement Cast session", async () => {
+  const controller = Object.create(CastController.prototype);
+  const events = [];
+  let callback;
+  const player = { seek(_target, done) { callback = done; } };
+  Object.assign(controller, {
+    player,
+    state: { connected: true, currentTrackId: "a", currentTime: 20, duration: 120, playerState: "PLAYING" },
+    stateUpdatedAt: Date.now(),
+    reportDiagnostic: (event, data) => events.push({ event, ...data }),
+    lastStatusDiagnosticSignature: ""
+  });
+  const operation = controller.seek(100);
+  controller.player = { seek() {} };
+  callback(null, { playerState: "PLAYING", currentTime: 100 });
+  await assert.rejects(operation, /sesión Cast cambió/);
+  assert.ok(controller.getState().currentTime >= 20 && controller.getState().currentTime < 20.1);
+  assert.ok(events.some((entry) => entry.event === "cast-seek-failed"));
+  assert.ok(!events.some((entry) => entry.event === "cast-seek-ack"));
+});
+
 test("HTTP supports ranges, full-response multi-range fallback and interrupted-transfer diagnostics", async () => {
   const folder = await mkdtemp(join(tmpdir(), "flac-cast-http-test-"));
   const file = join(folder, "sample.flac");

@@ -1,7 +1,7 @@
 {
   "name": "flac-cast",
   "productName": "Flac Cast",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "private": true,
   "license": "GPL-3.0-or-later",
   "description": "Local hi-res audio player with Google Cast support",
@@ -20,6 +20,7 @@
     "dev": "npm run build && electron .",
     "start": "electron .",
     "check": "tsc --noEmit",
+    "test:cast-playback-state": "node --test scripts/test-cast-playback-state.mjs",
     "test:cast-stability": "node --test scripts/test-cast-stability.mjs",
     "licenses:check": "node scripts/check-licenses.mjs",
     "generate:icon": "node scripts/generate-icon.mjs",

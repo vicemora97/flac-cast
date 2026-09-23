@@ -4,6 +4,17 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-09-23
+
+### Fixed
+
+- Prevented a disconnected Cast session from replacing the local now-playing track with stale receiver metadata.
+- Preserved an explicit pause when a delayed Cast reconnect or queue load completes, while still honoring remote Google Home play and pause commands.
+- Hardened Cast play, pause, and seek acknowledgements against callbacks from replaced sessions and added correlated command diagnostics.
+- Recognized receivers buffering at the final timestamp as terminal and verified the receiver state before advancing a queue that remains stuck at the end.
+- Preserved the requested timestamp when a receiver rejects a late-track FLAC seek, with bounded media and transport recovery instead of restarting at zero or entering a reconnect loop.
+- Added regression coverage for local/Cast track adoption, terminal playback states, delayed commands, and seek recovery state.
+
 ## [1.0.11] - 2026-09-15
 
 ### Changed
@@ -198,7 +209,10 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
-[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.12...HEAD
+[1.0.12]: https://github.com/vicemora97/flac-cast/compare/v1.0.11...v1.0.12
+[1.0.11]: https://github.com/vicemora97/flac-cast/compare/v1.0.10...v1.0.11
+[1.0.10]: https://github.com/vicemora97/flac-cast/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/vicemora97/flac-cast/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/vicemora97/flac-cast/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/vicemora97/flac-cast/compare/v1.0.6...v1.0.7

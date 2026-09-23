@@ -704,29 +704,72 @@ export class CastController {
     }), "Chromecast no respondió al actualizar los modos de cola");
   }
 
-  async command(command: "play" | "pause"): Promise<CastState> {
-    if (!this.player) throw new Error("No hay una sesión Chromecast activa");
-    const status = await new Promise<CastMediaStatus>((resolve, reject) => {
-      this.player![command]((error, result) => {
-        if (error) reject(error);
-        else resolve((result ?? {}) as CastMediaStatus);
+  async command(command: "play" | "pause", origin = "unknown"): Promise<CastState> {
+    const player = this.player;
+    if (!player) throw new Error("No hay una sesión Chromecast activa");
+    const diagnostic = {
+      command,
+      origin: origin.slice(0, 80),
+      trackId: this.state.currentTrackId,
+      playerState: this.state.playerState
+    };
+    this.reportDiagnostic("cast-command-request", diagnostic);
+    try {
+      const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+        player[command]((error, result) => {
+          if (error) reject(error);
+          else resolve((result ?? {}) as CastMediaStatus);
+        });
+      }), 5_000, `Chromecast no confirmó el comando ${command}`);
+      if (this.player !== player || !this.state.connected) {
+        throw new Error("La sesión Cast cambió mientras se procesaba el control de reproducción.");
+      }
+      this.applyStatus(status);
+      this.reportDiagnostic("cast-command-ack", {
+        ...diagnostic,
+        playerState: this.state.playerState,
+        currentTime: this.state.currentTime
       });
-    });
-    this.applyStatus(status);
-    return this.getState();
+      return this.getState();
+    } catch (error) {
+      this.reportDiagnostic("cast-command-failed", {
+        ...diagnostic,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
   }
 
   async seek(seconds: number): Promise<CastState> {
-    if (!this.player) throw new Error("No hay una sesión Chromecast activa");
+    const player = this.player;
+    if (!player) throw new Error("No hay una sesión Chromecast activa");
     const target = Math.max(0, Math.min(this.state.duration ?? Number.POSITIVE_INFINITY, seconds));
-    const status = await new Promise<CastMediaStatus>((resolve, reject) => {
-      this.player!.seek(target, (error, result) => {
-        if (error) reject(error);
-        else resolve((result ?? { currentTime: target }) as CastMediaStatus);
+    const diagnostic = { trackId: this.state.currentTrackId, target, playerState: this.state.playerState };
+    this.reportDiagnostic("cast-seek-request", diagnostic);
+    try {
+      const status = await withTimeout(new Promise<CastMediaStatus>((resolve, reject) => {
+        player.seek(target, (error, result) => {
+          if (error) reject(error);
+          else resolve((result ?? { currentTime: target }) as CastMediaStatus);
+        });
+      }), 5_000, "Chromecast no confirmó el cambio de posición");
+      if (this.player !== player || !this.state.connected) {
+        throw new Error("La sesión Cast cambió mientras se adelantaba la pista.");
+      }
+      this.applyStatus({ ...status, currentTime: status.currentTime ?? target });
+      this.reportDiagnostic("cast-seek-ack", {
+        ...diagnostic,
+        currentTime: this.state.currentTime,
+        playerState: this.state.playerState
       });
-    });
-    this.applyStatus({ ...status, currentTime: status.currentTime ?? target });
-    return this.getState();
+      return this.getState();
+    } catch (error) {
+      this.reportDiagnostic("cast-seek-failed", {
+        ...diagnostic,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
   }
 
   async setVolume(level: number): Promise<CastState> {
@@ -856,6 +899,8 @@ export class CastController {
       idleReason: this.state.idleReason,
       supportedMediaCommands: status.supportedMediaCommands,
       currentItemId: status.currentItemId,
+      currentTime: this.state.currentTime,
+      duration: this.state.duration,
       repeatMode: this.state.repeatMode,
       shuffle: this.state.shuffle,
       queue: (status.items ?? []).map((item) => ({ itemId: item.itemId, trackId: item.media?.customData?.trackId }))
@@ -991,7 +1036,7 @@ export class CastController {
     const loadId = randomUUID();
     const loadStarted = performance.now();
     const loadDiagnostic = { loadId, command: "QUEUE_LOAD", trackId: tracks[currentIndex]?.id,
-      mediaId: diagnosticMediaId(currentContentId), deliveryMode, itemCount: items.length };
+      mediaId: diagnosticMediaId(currentContentId), deliveryMode, itemCount: items.length, startTime };
 
     this.state = {
       ...this.state,

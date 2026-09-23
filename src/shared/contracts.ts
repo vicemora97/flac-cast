@@ -158,7 +158,7 @@ export type HiresApi = {
   castQueue(request: CastQueueRequest): Promise<CastState>;
   updateCastQueue(request: CastQueueRequest): Promise<CastState>;
   updateCastQueueModes(request: CastQueueRequest): Promise<CastState>;
-  castCommand(command: "play" | "pause"): Promise<CastState>;
+  castCommand(command: "play" | "pause", origin?: string): Promise<CastState>;
   castSeek(seconds: number): Promise<CastState>;
   castVolume(level: number): Promise<CastState>;
   prewarmCastTracks(tracks: CastTrack[]): Promise<number>;

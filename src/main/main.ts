@@ -480,7 +480,7 @@ ipcMain.handle("cast:queue-modes", (_event, request: CastQueueRequest) => {
   const tracks = request.tracks.map((track, index) => routeCastTrack(track, receiverHost, index !== request.currentIndex));
   return castController.updateQueueModes({ ...request, tracks });
 });
-ipcMain.handle("cast:command", (_event, command: "play" | "pause") => castController.command(command));
+ipcMain.handle("cast:command", (_event, command: "play" | "pause", origin?: string) => castController.command(command, origin));
 ipcMain.handle("cast:seek", (_event, seconds: number) => castController.seek(seconds));
 ipcMain.handle("cast:volume", (_event, level: number) => castController.setVolume(level));
 ipcMain.handle("cast:prewarm", async (_event, tracks: CastTrack[]): Promise<number> => {

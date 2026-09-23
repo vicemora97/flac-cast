@@ -1,5 +1,6 @@
 import type { CastDevice, CastState, CastTrack, LibraryResult, Playlist, SyncedLyrics, Track } from "../shared/contracts.js";
 import { buildAlbumGroups, type Album } from "./album-grouping.js";
+import { castPlaybackReachedEnd, remoteTrackIdForAdoption } from "./cast-playback-state.js";
 import { getLanguage, normalizeLanguage, setLanguage, t, type AppLanguage } from "./i18n.js";
 import type { SearchTrackRecord, SearchWorkerRequest, SearchWorkerResponse } from "./search-types.js";
 import { PlayerColors } from "./player-colors.js";
@@ -160,6 +161,16 @@ let castQueueAdvanceTimer: ReturnType<typeof setTimeout> | undefined;
 let castQueueAdvanceKey = "";
 let castPlaybackObservedTrackId: string | undefined;
 let castSessionGeneration = 0;
+let castPlaybackIntentGeneration = 0;
+let castPlaybackIntent: "play" | "pause" | undefined;
+let pendingCastSeek: {
+  trackId: string;
+  target: number;
+  expiresAt: number;
+  recoveryStarted: boolean;
+  transportRecoveryStarted: boolean;
+  stableSince?: number;
+} | undefined;
 let lastCastVolumeRefreshAt = 0;
 let lastDeviceRefreshAt = 0;
 let castDiscoveryGeneration = 0;
@@ -176,6 +187,86 @@ let searchIndexReady = false;
 
 function tracePlayback(event: string, data: Record<string, unknown> = {}): void {
   window.hires.logCastDiagnostic(event, data);
+}
+
+function markCastPlaybackIntent(intent: "play" | "pause" | undefined, origin: string): number {
+  castPlaybackIntentGeneration += 1;
+  castPlaybackIntent = intent;
+  tracePlayback("cast-playback-intent", {
+    intent: intent ?? "none",
+    origin,
+    generation: castPlaybackIntentGeneration,
+    trackId: selectedTrack?.id
+  });
+  return castPlaybackIntentGeneration;
+}
+
+async function adoptCastAutoplayResult(state: CastState, generation: number, origin: string): Promise<boolean> {
+  if (generation === castPlaybackIntentGeneration) {
+    currentCastState = state;
+    return true;
+  }
+  tracePlayback("cast-autoplay-superseded", {
+    origin,
+    operationGeneration: generation,
+    currentGeneration: castPlaybackIntentGeneration,
+    currentIntent: castPlaybackIntent,
+    trackId: state.currentTrackId
+  });
+  // A pause can race with a reconnect or QUEUE_LOAD that was already in
+  // flight. The Cast protocol cannot cancel that completed load, so pause the
+  // current receiver once more instead of letting its autoplay win the race.
+  if (castPlaybackIntent === "pause" && state.connected) {
+    try {
+      currentCastState = await window.hires.castCommand("pause", `${origin}:preserve-pause`);
+      renderCastState();
+    } catch (error) {
+      console.warn("Could not preserve Cast pause after a superseded autoplay operation", error);
+    }
+  }
+  return false;
+}
+
+function activePendingCastSeek(): typeof pendingCastSeek {
+  if (!pendingCastSeek) return undefined;
+  if (Date.now() > pendingCastSeek.expiresAt || pendingCastSeek.trackId !== selectedTrack?.id) {
+    pendingCastSeek = undefined;
+  }
+  return pendingCastSeek;
+}
+
+function observePendingCastSeek(state: CastState): void {
+  const pending = activePendingCastSeek();
+  if (!pending) return;
+  const currentTime = state.currentTime;
+  const reachedTarget = currentTime != null && currentTime >= pending.target - 1 && currentTime <= pending.target + 30;
+  if (state.connected && state.playerState === "PLAYING" && reachedTarget) {
+    pending.stableSince ??= Date.now();
+    if (Date.now() - pending.stableSince >= 5_000) {
+      tracePlayback("cast-seek-stable", { trackId: pending.trackId, target: pending.target, currentTime });
+      pendingCastSeek = undefined;
+    }
+  } else {
+    pending.stableSince = undefined;
+  }
+}
+
+function reservePendingCastSeekRecovery(origin: string): number | undefined {
+  const pending = activePendingCastSeek();
+  if (!pending || pending.recoveryStarted) return undefined;
+  pending.recoveryStarted = true;
+  pending.expiresAt = Date.now() + 30_000;
+  tracePlayback("cast-seek-recovery", { origin, trackId: pending.trackId, target: pending.target });
+  return pending.target;
+}
+
+function reservePendingCastSeekTransportRecovery(): number | undefined {
+  const pending = activePendingCastSeek();
+  if (!pending || pending.transportRecoveryStarted) return undefined;
+  pending.transportRecoveryStarted = true;
+  pending.expiresAt = Date.now() + 30_000;
+  tracePlayback("cast-seek-recovery", { origin: "transport-disconnect", trackId: pending.trackId, target: pending.target });
+  return pending.target;
 }
 let searchIndexGeneration = 0;
 let searchRequestId = 0;
@@ -270,7 +361,7 @@ player.addEventListener("pause", renderLocalTransport);
 player.addEventListener("timeupdate", renderLocalTransport);
 player.addEventListener("durationchange", renderLocalTransport);
 player.addEventListener("loadedmetadata", renderLocalTransport);
-localToggle.addEventListener("click", () => void togglePlayback());
+localToggle.addEventListener("click", () => void togglePlayback("local-player"));
 localProgress.addEventListener("input", () => {
   draggingLocalProgress = true;
   localTime.textContent = `${formatDuration(Number(localProgress.value))} / ${formatDuration(Number(localProgress.max))}`;
@@ -288,7 +379,7 @@ localVolume.addEventListener("input", () => {
 window.hires.onTaskbarPlaybackCommand((command) => {
   if (command === "previous") void playPrevious();
   else if (command === "next") void playNext();
-  else void togglePlayback();
+  else void togglePlayback("windows-media-control");
 });
 updateQueueButtons();
 updateRangeProgress(localVolume, 1, 1);
@@ -305,16 +396,28 @@ castClose.addEventListener("click", () => {
   castPanel.hidden = true;
   castDiscoveryGeneration += 1;
 });
-castToggle.addEventListener("click", () => void toggleCastPlayback());
-remoteToggle.addEventListener("click", () => void toggleCastPlayback());
+castToggle.addEventListener("click", () => void toggleCastPlayback("cast-panel"));
+remoteToggle.addEventListener("click", () => void toggleCastPlayback("player-bar"));
 remoteProgress.addEventListener("input", () => {
   draggingRemoteProgress = true;
   remoteTime.textContent = `${formatDuration(Number(remoteProgress.value))} / ${formatDuration(Number(remoteProgress.max))}`;
   updateRangeProgress(remoteProgress, Number(remoteProgress.value), Number(remoteProgress.max));
 });
 remoteProgress.addEventListener("change", async () => {
+  const target = Number(remoteProgress.value);
+  if (selectedTrack && Number.isFinite(target)) {
+    pendingCastSeek = {
+      trackId: selectedTrack.id,
+      target,
+      expiresAt: Date.now() + 30_000,
+      recoveryStarted: false,
+      transportRecoveryStarted: false
+    };
+    tracePlayback("cast-seek-ui", { trackId: selectedTrack.id, target });
+  }
   try {
-    currentCastState = await window.hires.castSeek(Number(remoteProgress.value));
+    currentCastState = await window.hires.castSeek(target);
+    observePendingCastSeek(currentCastState);
     renderCastState();
   } catch (error) {
     showCastError(error);
@@ -356,6 +459,8 @@ window.addEventListener("wheel", (event) => {
 }, { passive: false, capture: true });
 castDisconnect.addEventListener("click", async () => {
   try {
+    pendingCastSeek = undefined;
+    markCastPlaybackIntent(undefined, "disconnect");
     resetCastSessionTracking();
     currentCastState = await window.hires.disconnectCast();
     renderCastState();
@@ -1543,7 +1648,8 @@ async function clearDeletedCurrentTrack(): Promise<void> {
   player.load();
   if (currentCastState.connected) {
     try {
-      currentCastState = await window.hires.castCommand("pause");
+      markCastPlaybackIntent("pause", "deleted-current-track");
+      currentCastState = await window.hires.castCommand("pause", "deleted-current-track");
     } catch (error) {
       console.warn("No se pudo pausar Chromecast después de eliminar la pista", error);
     }
@@ -1720,6 +1826,7 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
     return;
   }
   trackChangeInProgress = true;
+  pendingCastSeek = undefined;
   try {
     if (!preserveQueue) {
       setPlaybackContext(track, context ?? libraryTracks);
@@ -1756,8 +1863,10 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
         return;
       }
       try {
+        const intentGeneration = markCastPlaybackIntent("play", "track-change");
         castStatus.textContent = t("sendingTrack", { title: track.title });
-        currentCastState = await castCurrentQueue(0);
+        const state = await castCurrentQueue(0);
+        if (!await adoptCastAutoplayResult(state, intentGeneration, "track-change")) return;
         renderDeliveryQuality(track);
         renderCastState();
       } catch (error) {
@@ -1766,6 +1875,7 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
       return;
     }
 
+    markCastPlaybackIntent(undefined, "local-track");
     await playLocalTrack(track);
   } finally {
     trackChangeInProgress = false;
@@ -2020,7 +2130,17 @@ async function refreshCastState(render = true): Promise<void> {
     const previousCastState = currentCastState;
     currentCastState = await window.hires.getCastState(refreshVolume);
     if (refreshVolume) lastCastVolumeRefreshAt = Date.now();
-    adoptRemoteCastTrack(currentCastState.currentTrackId);
+    observePendingCastSeek(currentCastState);
+    if (currentCastState.connected && currentCastState.playerState === "PAUSED"
+      && previousCastState.playerState !== "PAUSED" && castPlaybackIntent !== "pause") {
+      markCastPlaybackIntent("pause", "receiver-status");
+    } else if (currentCastState.connected && currentCastState.playerState === "PLAYING"
+      && previousCastState.playerState === "PAUSED" && castPlaybackIntent !== "play") {
+      // A deliberate Play from Google Home must remain authoritative; unlike a
+      // stale local autoplay operation, it is a new receiver-side intent.
+      markCastPlaybackIntent("play", "receiver-status");
+    }
+    adoptRemoteCastTrack(remoteTrackIdForAdoption(currentCastState));
     adoptRemoteCastQueueModes(currentCastState);
     const duration = currentCastState.duration ?? selectedTrack?.durationSeconds;
     const currentTime = currentCastState.currentTime ?? 0;
@@ -2047,29 +2167,38 @@ async function refreshCastState(render = true): Promise<void> {
       && selectedTrack
       && !trackChangeInProgress
       && !castTransportRecoveryInFlight
+      && activePendingCastSeek()?.transportRecoveryStarted !== true
     ) {
       const recoveryKey = `transport:${currentCastState.deviceId}:${selectedTrack.id}`;
       if (castAutoRecoveryKey !== recoveryKey) {
         castAutoRecoveryKey = recoveryKey;
         const deviceId = currentCastState.deviceId;
-        const resumeAt = currentCastState.currentTime ?? previousCastState.currentTime ?? 0;
+        const seekResumeAt = reservePendingCastSeekTransportRecovery();
+        const resumeAt = seekResumeAt ?? currentCastState.currentTime ?? previousCastState.currentTime ?? 0;
         void recoverInterruptedCastSession(deviceId, resumeAt);
       }
     }
-    if (currentCastState.connected && currentCastState.playerState === "IDLE" && currentCastState.idleReason === "ERROR" && selectedTrack && !trackChangeInProgress) {
-      const recoveryKey = `${currentCastState.deviceId ?? "cast"}:${selectedTrack.id}`;
+    if (currentCastState.connected && currentCastState.playerState === "IDLE" && currentCastState.idleReason === "ERROR"
+      && selectedTrack && !trackChangeInProgress && activePendingCastSeek()?.recoveryStarted !== true) {
+      const seekResumeAt = reservePendingCastSeekRecovery("media-error");
+      const recoveryKey = seekResumeAt == null
+        ? `${currentCastState.deviceId ?? "cast"}:${selectedTrack.id}`
+        : `seek:${currentCastState.deviceId ?? "cast"}:${selectedTrack.id}:${seekResumeAt}`;
       if (castAutoRecoveryKey !== recoveryKey) {
         castAutoRecoveryKey = recoveryKey;
-        const resumeAt = currentCastState.currentTime ?? 0;
-        void castCurrentQueue(resumeAt).then((state) => {
-          currentCastState = state;
+        const resumeAt = seekResumeAt ?? currentCastState.currentTime ?? 0;
+        const intentGeneration = castPlaybackIntentGeneration;
+        void castCurrentQueue(resumeAt).then(async (state) => {
+          if (!await adoptCastAutoplayResult(state, intentGeneration, "media-error-recovery")) return;
           renderCastState();
         }).catch((error) => console.warn("Automatic Cast recovery did not succeed", error));
       }
     }
     if (render) renderCastState();
+    const reachedEnd = castPlaybackReachedEnd(currentCastState, duration);
     const finished = currentCastState.idleReason === "FINISHED"
-      || (currentCastState.playerState !== "BUFFERING" && duration != null && currentTime >= duration - 0.25);
+      || (currentCastState.playerState !== "BUFFERING" && reachedEnd);
+    const bufferingAtEnd = currentCastState.playerState === "BUFFERING" && reachedEnd;
     const terminalStateBelongsToSelectedTrack = Boolean(
       selectedTrack
       && currentCastState.currentTrackId === selectedTrack.id
@@ -2080,7 +2209,7 @@ async function refreshCastState(render = true): Promise<void> {
     // starts that item twice: once from the receiver and once from the renderer.
     // Only the single-item compatibility pipeline needs desktop auto-advance.
     const receiverOwnsAutoAdvance = currentCastState.queueActive === true;
-    if (receiverOwnsAutoAdvance && finished && terminalStateBelongsToSelectedTrack && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
+    if (receiverOwnsAutoAdvance && (finished || bufferingAtEnd) && terminalStateBelongsToSelectedTrack && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
       scheduleCastQueueAdvanceWatchdog(selectedTrack.id);
     } else if (!receiverOwnsAutoAdvance && finished && terminalStateBelongsToSelectedTrack && selectedTrack && !trackChangeInProgress && autoAdvancedTrackId !== selectedTrack.id) {
       cancelCastQueueAdvanceWatchdog();
@@ -2108,6 +2237,12 @@ function scheduleCastQueueAdvanceWatchdog(trackId: string): void {
   if (castQueueAdvanceTimer && castQueueAdvanceKey === key) return;
   cancelCastQueueAdvanceWatchdog();
   castQueueAdvanceKey = key;
+  tracePlayback("cast-queue-watchdog-scheduled", {
+    trackId,
+    playerState: currentCastState.playerState,
+    currentTime: currentCastState.currentTime,
+    duration: currentCastState.duration ?? selectedTrack?.durationSeconds
+  });
   castQueueAdvanceTimer = setTimeout(async () => {
     castQueueAdvanceTimer = undefined;
     try {
@@ -2115,14 +2250,19 @@ function scheduleCastQueueAdvanceWatchdog(trackId: string): void {
       const latest = await window.hires.getCastState(false);
       if (generation !== castSessionGeneration) return;
       currentCastState = latest;
-      adoptRemoteCastTrack(latest.currentTrackId);
+      adoptRemoteCastTrack(remoteTrackIdForAdoption(latest));
       if (!latest.connected || latest.queueActive !== true || selectedTrack?.id !== trackId) return;
       if (latest.currentTrackId && latest.currentTrackId !== trackId) return;
       if (castPlaybackObservedTrackId !== trackId) return;
       const duration = latest.duration ?? selectedTrack.durationSeconds;
-      const stillAtEnd = latest.idleReason === "FINISHED"
-        || (duration != null && (latest.currentTime ?? 0) >= duration - 0.25);
-      if (!stillAtEnd || latest.playerState === "BUFFERING") return;
+      const stillAtEnd = castPlaybackReachedEnd(latest, duration);
+      if (!stillAtEnd) return;
+      tracePlayback("cast-queue-watchdog-advance", {
+        trackId,
+        playerState: latest.playerState,
+        currentTime: latest.currentTime,
+        duration
+      });
       autoAdvancedTrackId = trackId;
       await playNext(true, "cast-watchdog");
     } catch (error) {
@@ -2130,7 +2270,7 @@ function scheduleCastQueueAdvanceWatchdog(trackId: string): void {
     } finally {
       if (castQueueAdvanceKey === key) castQueueAdvanceKey = "";
     }
-  }, 2_500);
+  }, 4_000);
 }
 
 function cancelCastQueueAdvanceWatchdog(): void {
@@ -2142,10 +2282,13 @@ function cancelCastQueueAdvanceWatchdog(): void {
 async function recoverInterruptedCastSession(deviceId: string, resumeAt: number): Promise<void> {
   if (castTransportRecoveryInFlight || !selectedTrack) return;
   castTransportRecoveryInFlight = true;
+  const intentGeneration = castPlaybackIntentGeneration;
   resetCastSessionTracking();
   try {
-    currentCastState = await window.hires.connectCast(deviceId);
-    currentCastState = await castCurrentQueue(resumeAt);
+    const connectedState = await window.hires.connectCast(deviceId);
+    if (!await adoptCastAutoplayResult(connectedState, intentGeneration, "transport-recovery-connect")) return;
+    const playbackState = await castCurrentQueue(resumeAt);
+    if (!await adoptCastAutoplayResult(playbackState, intentGeneration, "transport-recovery-load")) return;
     autoAdvancedTrackId = undefined;
     renderCastState();
   } catch (error) {
@@ -2236,14 +2379,17 @@ async function connectCast(device: CastDevice, button: HTMLButtonElement): Promi
   button.disabled = true;
   castStatus.textContent = t("connectingDevice", { name: device.name });
   try {
+    const intentGeneration = markCastPlaybackIntent("play", "device-connect");
     resetCastSessionTracking();
     currentCastState = await window.hires.connectCast(device.id);
-    const localStartTime = player.dataset.trackId === selectedTrack?.id
+    const pendingSeekTarget = activePendingCastSeek()?.target;
+    const localStartTime = pendingSeekTarget ?? (player.dataset.trackId === selectedTrack?.id
       ? Math.max(0, player.currentTime || 0)
-      : 0;
+      : 0);
     player.pause();
     if (selectedTrack) {
-      currentCastState = await castCurrentQueue(localStartTime);
+      const state = await castCurrentQueue(localStartTime);
+      if (!await adoptCastAutoplayResult(state, intentGeneration, "device-connect")) return;
       renderDeliveryQuality(selectedTrack);
     }
     renderCastState();
@@ -2307,19 +2453,26 @@ function renderCastState(): void {
   scheduleCastPrewarm();
 }
 
-async function toggleCastPlayback(): Promise<void> {
+async function toggleCastPlayback(origin = "player"): Promise<void> {
+  const command = currentCastState.playerState === "PAUSED" ? "play" : "pause";
+  const intentGeneration = markCastPlaybackIntent(command, origin);
   try {
-    currentCastState = await window.hires.castCommand(currentCastState.playerState === "PAUSED" ? "play" : "pause");
+    const state = await window.hires.castCommand(command, origin);
+    if (intentGeneration !== castPlaybackIntentGeneration) {
+      tracePlayback("cast-command-result-obsolete", { command, origin, intentGeneration, currentGeneration: castPlaybackIntentGeneration });
+      return;
+    }
+    currentCastState = state;
     renderCastState();
   } catch (error) {
     showCastError(error);
   }
 }
 
-async function togglePlayback(): Promise<void> {
+async function togglePlayback(origin = "player"): Promise<void> {
   if (!selectedTrack) return;
   if (currentCastState.connected) {
-    await toggleCastPlayback();
+    await toggleCastPlayback(origin);
     return;
   }
   if (player.dataset.trackId !== selectedTrack.id) {
@@ -3058,7 +3211,7 @@ function handleKeyboardShortcut(event: KeyboardEvent): void {
     librarySearch.select();
   } else if (event.code === "Space") {
     event.preventDefault();
-    void togglePlayback();
+    void togglePlayback("keyboard-space");
   } else if (event.ctrlKey && event.key === "ArrowRight") {
     event.preventDefault();
     void playNext();
