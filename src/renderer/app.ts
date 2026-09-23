@@ -1,6 +1,6 @@
 import type { CastDevice, CastState, CastTrack, LibraryResult, Playlist, SyncedLyrics, Track } from "../shared/contracts.js";
 import { buildAlbumGroups, type Album } from "./album-grouping.js";
-import { castPlaybackReachedEnd, remoteTrackIdForAdoption } from "./cast-playback-state.js";
+import { castPlaybackReachedEnd, castQueueCurrentIndex, distinctCastHistory, reconcileCastScheduledFuture, remoteTrackIdForAdoption } from "./cast-playback-state.js";
 import { getLanguage, normalizeLanguage, setLanguage, t, type AppLanguage } from "./i18n.js";
 import type { SearchTrackRecord, SearchWorkerRequest, SearchWorkerResponse } from "./search-types.js";
 import { PlayerColors } from "./player-colors.js";
@@ -1889,7 +1889,6 @@ async function playTrack(track: Track, context?: Track[], preserveQueue = false,
 
 function buildCastQueuePlan(): { tracks: CastTrack[]; currentIndex: number } {
   if (!selectedTrack) return { tracks: [], currentIndex: 0 };
-  const previous = repeatMode === "context" ? [] : playbackHistory.slice(-5).map((entry) => entry.track);
   let scheduled = playbackQueue.slice(Math.max(0, queueIndex + 1));
   if (repeatMode === "context") {
     const anchor = currentPlaybackSource === "manual" ? playbackQueue[queueIndex] : selectedTrack;
@@ -1901,6 +1900,16 @@ function buildCastQueuePlan(): { tracks: CastTrack[]; currentIndex: number } {
       ];
     }
   }
+  // History exists only to support Previous on the receiver. Never send an
+  // historical copy of the current or a future item: duplicate track IDs make
+  // a later status frame ambiguous and can move an already-played song back
+  // into the upcoming queue.
+  const previous = repeatMode === "context"
+    ? []
+    : distinctCastHistory(
+      playbackHistory.map((entry) => entry.track),
+      [selectedTrack, ...manualQueue, ...scheduled]
+    );
   const contextOrder = new Map(playbackContext.map((track, index) => [track.id, index]));
   const annotate = (track: Track, group: NonNullable<CastTrack["castQueueGroup"]>, fallbackOrder: number): CastTrack => ({
     ...track,
@@ -2055,9 +2064,11 @@ function adoptRemoteCastQueueModes(state: CastState): void {
 
 function adoptRemoteCastQueueOrder(items: CastState["queueItems"]): boolean {
   if (!selectedTrack || !items || items.length === 0) return false;
-  let currentPosition = items.findIndex((item) => item.current);
-  if (currentPosition < 0) currentPosition = items.findIndex((item) => item.trackId === selectedTrack!.id);
-  const afterCurrent = items.slice(currentPosition >= 0 ? currentPosition + 1 : 0);
+  const currentPosition = castQueueCurrentIndex(items, selectedTrack.id);
+  // The stored queue can belong to a previous rolling window when a compact
+  // status frame omits items. Do not reorder from an unrelated stale window.
+  if (currentPosition < 0) return false;
+  const afterCurrent = items.slice(currentPosition + 1);
   const remoteScheduledIds = afterCurrent
     .filter((item) => item.group === "scheduled")
     .map((item) => item.trackId);
@@ -2074,16 +2085,10 @@ function adoptRemoteCastQueueOrder(items: CastState["queueItems"]): boolean {
   };
 
   if (currentPlaybackSource === "scheduled") {
-    const pool = playbackQueue.filter((track) => track.id !== selectedTrack!.id);
-    const { ordered, remaining } = takeInRemoteOrder(pool);
-    const nextQueue = [selectedTrack, ...ordered, ...remaining];
+    const nextQueue = reconcileCastScheduledFuture(playbackQueue, queueIndex, remoteScheduledIds);
     const changed = nextQueue.some((track, index) => playbackQueue[index]?.id !== track.id)
-      || nextQueue.length !== playbackQueue.length
-      || queueIndex !== 0;
-    if (changed) {
-      playbackQueue = nextQueue;
-      queueIndex = 0;
-    }
+      || nextQueue.length !== playbackQueue.length;
+    if (changed) playbackQueue = nextQueue;
     return changed;
   }
 

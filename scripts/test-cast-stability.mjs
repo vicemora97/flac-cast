@@ -151,6 +151,63 @@ test("FINISHED remains valid for IDLE, but is not inherited by a playing new tra
   assert.equal(controller.getState().idleReason, undefined);
 });
 
+test("a compact next-track status advances the retained queue current marker", () => {
+  const { controller } = receiver();
+  controller.state = {
+    ...controller.state,
+    currentTrackId: "a",
+    queueItems: [
+      { trackId: "a", current: true, group: "current" },
+      { trackId: "b", current: false, group: "scheduled" },
+      { trackId: "c", current: false, group: "scheduled" }
+    ]
+  };
+  controller.applyStatus({ playerState: "PLAYING", media: { customData: { trackId: "b" } } });
+  assert.deepEqual(controller.getState().queueItems?.map((item) => [item.trackId, item.current]), [
+    ["a", false], ["b", true], ["c", false]
+  ]);
+});
+
+test("stale custom receiver status cannot turn off a pending local queue mode change", () => {
+  const { controller } = receiver();
+  controller.state = { ...controller.state, customReceiver: true, repeatMode: "all", shuffle: true };
+  controller.queueModeIntent = { repeatMode: "all", shuffle: true, protectedUntil: Date.now() + 12_000 };
+  controller.applyStatus({
+    playerState: "PLAYING",
+    repeatMode: "REPEAT_OFF",
+    queueData: { repeatMode: "REPEAT_OFF", shuffle: false }
+  });
+  assert.equal(controller.getState().repeatMode, "all");
+  assert.equal(controller.getState().shuffle, true);
+  assert.ok(controller.queueModeIntent);
+});
+
+test("custom receiver acknowledgement commits the latest local queue mode intent", () => {
+  const { controller } = receiver();
+  controller.state = { ...controller.state, customReceiver: true, repeatMode: "off", shuffle: false };
+  controller.queueModeIntent = { repeatMode: "off", shuffle: false, protectedUntil: Date.now() + 12_000 };
+  controller.applyStatus({
+    playerState: "PLAYING",
+    customData: { flacCastQueueModes: { repeatMode: "REPEAT_OFF", shuffle: false } }
+  });
+  assert.equal(controller.getState().repeatMode, "off");
+  assert.equal(controller.getState().shuffle, false);
+  assert.equal(controller.queueModeIntent, undefined);
+});
+
+test("a later explicit Google Home queue mode change replaces an unconfirmed local intent", () => {
+  const { controller } = receiver();
+  controller.state = { ...controller.state, customReceiver: true, repeatMode: "all", shuffle: true };
+  controller.queueModeIntent = { repeatMode: "all", shuffle: true, protectedUntil: Date.now() - 1 };
+  controller.applyStatus({
+    playerState: "PLAYING",
+    customData: { flacCastQueueModes: { repeatMode: "REPEAT_OFF", shuffle: false } }
+  });
+  assert.equal(controller.getState().repeatMode, "off");
+  assert.equal(controller.getState().shuffle, false);
+  assert.equal(controller.queueModeIntent, undefined);
+});
+
 test("volume changes never call a client whose receiver controller has already closed", async () => {
   const controller = Object.create(CastController.prototype);
   let called = 0;

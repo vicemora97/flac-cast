@@ -20,6 +20,11 @@ type PreparedFlac = { url: string; repacked: boolean; cached: boolean };
 type FlacPreparer = (track: CastTrack) => Promise<PreparedFlac>;
 type ReceiverStatus = { volume?: { level?: number; muted?: boolean } };
 type ClientWithReceiverController = Client & { receiver?: unknown };
+type QueueModeState = {
+  repeatMode: NonNullable<CastState["repeatMode"]>;
+  shuffle: boolean;
+};
+type QueueModeIntent = QueueModeState & { protectedUntil: number };
 export type PreferredCastDelivery = "original" | "compatible" | "wav";
 
 export class CastController {
@@ -38,6 +43,7 @@ export class CastController {
   private queueGeneration = 0;
   private activeQueueGeneration = 0;
   private pendingQueueCommand?: { player: DefaultMediaReceiver; settled: Promise<void> };
+  private queueModeIntent?: QueueModeIntent;
   private readonly receiverProfiles = new Map<string, Map<string, PreferredCastDelivery>>();
   private lastStatusDiagnosticSignature = "";
 
@@ -335,6 +341,7 @@ export class CastController {
     const recoveryDeviceId = this.state.deviceId;
     const requestedStartTime = Number.isFinite(request.startTimeSeconds) ? request.startTimeSeconds ?? 0 : 0;
     const startTime = Math.max(0, Math.min(current.durationSeconds ?? Number.POSITIVE_INFINITY, requestedStartTime));
+    this.rememberQueueModeIntent(request);
 
     let contentId = current.castUrl;
     let contentType = directContentTypes(current)[0] ?? "application/octet-stream";
@@ -397,7 +404,27 @@ export class CastController {
   }
 
   updateQueueModes(request: CastQueueRequest): Promise<CastState> {
+    // MEDIA_STATUS frames emitted while a queue command is in flight often
+    // still describe the previous repeat/shuffle values. Preserve the latest
+    // user intent until the receiver explicitly acknowledges it; otherwise a
+    // second click activates and reshuffles again instead of turning it off.
+    this.rememberQueueModeIntent(request);
     return this.enqueueQueueMutation(request, () => this.updateQueueModesNow(request));
+  }
+
+  private rememberQueueModeIntent(request: Pick<CastQueueRequest, "repeatMode" | "shuffle">): void {
+    this.queueModeIntent = {
+      repeatMode: request.repeatMode,
+      shuffle: request.shuffle,
+      // A queue mutation can wait behind another acknowledged Cast command.
+      // Keep stale receiver frames from winning during that bounded wait.
+      protectedUntil: Date.now() + 12_000
+    };
+    this.state = { ...this.state, repeatMode: request.repeatMode, shuffle: request.shuffle };
+    this.reportDiagnostic("queue-mode-intent", {
+      repeatMode: request.repeatMode,
+      shuffle: request.shuffle
+    });
   }
 
   private enqueueQueueMutation(request: CastQueueRequest, mutate: () => Promise<CastState>): Promise<CastState> {
@@ -819,6 +846,7 @@ export class CastController {
     this.player = undefined;
     this.lastLoadedContent = undefined;
     this.queueAllowed = true;
+    this.queueModeIntent = undefined;
 
     if (client && player && stopReceiver) {
       await new Promise<void>((resolve) => {
@@ -859,6 +887,20 @@ export class CastController {
     const previousTrackId = this.state.currentTrackId;
     const reportedTrackId = status.media?.customData?.trackId;
     const trackChanged = Boolean(reportedTrackId && reportedTrackId !== this.state.currentTrackId);
+    const queueModes = this.resolveQueueModes(status);
+    const queueItems = status.items?.length
+      ? status.items.flatMap((item) => {
+        const trackId = item.media?.customData?.trackId;
+        return trackId ? [{
+          trackId,
+          current: item.itemId != null && item.itemId === status.currentItemId,
+          group: item.media?.customData?.castQueueGroup,
+          order: item.media?.customData?.castQueueOrder
+        }] : [];
+      })
+      : trackChanged && reportedTrackId
+        ? moveQueueCurrentMarker(this.state.queueItems, reportedTrackId)
+        : this.state.queueItems;
     this.state = {
       ...this.state,
       error: undefined,
@@ -874,21 +916,9 @@ export class CastController {
       deliveryMode: status.media?.customData?.deliveryMode ?? this.state.deliveryMode,
       deliveryBits: status.media?.customData?.deliveryBits ?? this.state.deliveryBits,
       deliverySampleRate: status.media?.customData?.deliverySampleRate ?? this.state.deliverySampleRate,
-      repeatMode: reportedCastRepeatMode(status) === "REPEAT_SINGLE" ? "single"
-        : reportedCastRepeatMode(status) === "REPEAT_ALL" || reportedCastRepeatMode(status) === "REPEAT_ALL_AND_SHUFFLE" ? "all"
-          : reportedCastRepeatMode(status) === "REPEAT_OFF" ? "off" : this.state.repeatMode,
-      shuffle: reportedCastShuffle(status) ?? (reportedCastRepeatMode(status) === "REPEAT_ALL_AND_SHUFFLE" ? true : this.state.shuffle),
-      queueItems: status.items?.length
-        ? status.items.flatMap((item) => {
-          const trackId = item.media?.customData?.trackId;
-          return trackId ? [{
-            trackId,
-            current: item.itemId != null && item.itemId === status.currentItemId,
-            group: item.media?.customData?.castQueueGroup,
-            order: item.media?.customData?.castQueueOrder
-          }] : [];
-        })
-        : this.state.queueItems
+      repeatMode: queueModes.repeatMode,
+      shuffle: queueModes.shuffle,
+      queueItems
     };
     this.stateUpdatedAt = Date.now();
     const diagnostic = {
@@ -914,6 +944,47 @@ export class CastController {
     // Receiver volume comes from Client status/getVolume and must remain the
     // source of truth for the physical soundbar slider.
     if (status.playerState === "PLAYING") this.state.deliveryPhase = "playing";
+  }
+
+  private resolveQueueModes(status: CastMediaStatus): {
+    repeatMode: CastState["repeatMode"];
+    shuffle: CastState["shuffle"];
+  } {
+    const customModes = reportedCustomQueueModes(status);
+    // For the custom receiver, only its explicit flacCastQueueModes payload is
+    // authoritative. Native repeatMode/queueData fields can lag behind and are
+    // the source of the visual toggle regression. The Default Media Receiver
+    // has no custom acknowledgement, so its native fields remain authoritative.
+    const reportedRepeat = customModes?.repeatMode
+      ?? (this.state.customReceiver ? undefined : reportedCastRepeatMode(status));
+    const reportedShuffle = customModes?.shuffle
+      ?? (this.state.customReceiver ? undefined : reportedCastShuffle(status));
+    const remoteRepeat = normalizeCastRepeatMode(reportedRepeat);
+    const remoteShuffle = typeof reportedShuffle === "boolean"
+      ? reportedShuffle
+      : reportedRepeat === "REPEAT_ALL_AND_SHUFFLE" ? true : undefined;
+    const intent = this.queueModeIntent;
+
+    if (intent) {
+      const completeReport = remoteRepeat !== undefined && remoteShuffle !== undefined;
+      const matchesIntent = remoteRepeat === intent.repeatMode && remoteShuffle === intent.shuffle;
+      if (completeReport && matchesIntent) {
+        this.queueModeIntent = undefined;
+        return { repeatMode: remoteRepeat, shuffle: remoteShuffle };
+      }
+      if (completeReport && Date.now() >= intent.protectedUntil) {
+        // A later, explicit receiver state represents a remote Google Home
+        // command rather than the stale response to our local click.
+        this.queueModeIntent = undefined;
+        return { repeatMode: remoteRepeat, shuffle: remoteShuffle };
+      }
+      return { repeatMode: intent.repeatMode, shuffle: intent.shuffle };
+    }
+
+    return {
+      repeatMode: remoteRepeat ?? this.state.repeatMode,
+      shuffle: remoteShuffle ?? this.state.shuffle
+    };
   }
 
   private applyReceiverStatus(status: ReceiverStatus): void {
@@ -1320,10 +1391,38 @@ function reportedCastRepeatMode(status: CastMediaStatus): CastMediaStatus["repea
     ?? status.queueData?.repeatMode;
 }
 
+function reportedCustomQueueModes(status: CastMediaStatus): {
+  repeatMode?: CastMediaStatus["repeatMode"];
+  shuffle?: boolean;
+} | undefined {
+  const modes = status.customData?.flacCastQueueModes;
+  if (!modes || typeof modes !== "object") return undefined;
+  return {
+    repeatMode: modes.repeatMode,
+    shuffle: typeof modes.shuffle === "boolean" ? modes.shuffle : undefined
+  };
+}
+
+function normalizeCastRepeatMode(mode: CastMediaStatus["repeatMode"]): CastState["repeatMode"] {
+  if (mode === "REPEAT_SINGLE") return "single";
+  if (mode === "REPEAT_ALL" || mode === "REPEAT_ALL_AND_SHUFFLE") return "all";
+  if (mode === "REPEAT_OFF") return "off";
+  return undefined;
+}
+
 function reportedCastShuffle(status: CastMediaStatus): boolean | undefined {
   return status.customData?.flacCastQueueModes?.shuffle
     ?? status.queueData?.shuffle
     ?? (status.repeatMode === "REPEAT_ALL_AND_SHUFFLE" ? true : undefined);
+}
+
+function moveQueueCurrentMarker(items: CastState["queueItems"], trackId: string): CastState["queueItems"] {
+  if (!items || items.length === 0) return items;
+  const previousCurrent = items.findIndex((item) => item.current);
+  let current = items.findIndex((item, index) => index > previousCurrent && item.trackId === trackId);
+  if (current < 0) current = items.findIndex((item) => item.trackId === trackId);
+  if (current < 0) return items;
+  return items.map((item, index) => ({ ...item, current: index === current }));
 }
 
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
