@@ -4,6 +4,17 @@ All notable changes to Flac Cast are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-24
+
+### Fixed
+
+- Updated the XML dependency used by native packaging to a patched release before producing the 1.1.0 artifacts.
+- Kept local shuffle and repeat controls selected while the Cast receiver acknowledges the latest queue-mode intent, without blocking later Google Home changes.
+- Prevented stale compact Cast status frames from moving already-played tracks back into the upcoming queue.
+- Kept playback history, the current item, and future Cast items disjoint so duplicate track identities cannot confuse queue reconciliation.
+- Reordered only the future portion of a scheduled queue, preserving the played prefix across receiver-side track transitions.
+- Added regression coverage for delayed queue-mode acknowledgements, compact next-track status frames, duplicate history items, and remote future-order reconciliation.
+
 ## [1.0.12] - 2026-09-23
 
 ### Fixed
@@ -209,7 +220,8 @@ All notable changes to Flac Cast are documented in this file.
 - Windows x64 packaging and an unsigned Squirrel installer.
 - macOS Apple silicon packaging and an unsigned DMG installer.
 
-[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.0.12...HEAD
+[Unreleased]: https://github.com/vicemora97/flac-cast/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/vicemora97/flac-cast/compare/v1.0.12...v1.1.0
 [1.0.12]: https://github.com/vicemora97/flac-cast/compare/v1.0.11...v1.0.12
 [1.0.11]: https://github.com/vicemora97/flac-cast/compare/v1.0.10...v1.0.11
 [1.0.10]: https://github.com/vicemora97/flac-cast/compare/v1.0.9...v1.0.10
